@@ -12,7 +12,9 @@ in_home() {
 prefix=$home/.local/share/sudo-dialog
 
 printf 'export EDITOR=vi\n' >"$home/.zshenv"
-printf 'alias ll="ls -l"' >"$home/.bashrc" # no final newline on purpose
+# Like Ubuntu's default ~/.bashrc: stop early unless interactive. No final
+# newline, on purpose.
+printf '%s\n%s' 'case $- in *i*) ;; *) return ;; esac' 'alias ll="ls -l"' >"$home/.bashrc"
 mkdir -p "$home/.claude"
 printf '{"model":"opus","permissions":{"allow":["Bash(ls:*)"]}}\n' >"$home/.claude/settings.json"
 cp "$home/.zshenv" "$home/zshenv.orig"
@@ -25,7 +27,13 @@ in_home "$cli" install --shell zsh,bash --claude-deny >/dev/null
 assert_eq "install: one block after two installs" "$(grep -c '>>> sudo-dialog >>>' "$home/.zshenv")" 1
 assert_eq "install: a second install changes nothing" "$(cmp -s "$home/.zshenv" "$home/zshenv.installed" && echo same)" same
 assert_contains "install: existing settings kept" "$(cat "$home/.zshenv")" "export EDITOR=vi"
-assert_eq "install: block starts on its own line" "$(sed -n 2p "$home/.bashrc")" "# >>> sudo-dialog >>>"
+assert_eq "install: bash block goes on top" "$(sed -n 1p "$home/.bashrc")" "# >>> sudo-dialog >>>"
+assert_contains "install: bashrc keeps its content" "$(cat "$home/.bashrc")" 'alias ll="ls -l"'
+# shellcheck disable=SC2016 # expanded by bash
+assert_eq "install: non-interactive bash sees it despite the early return" \
+	"$(env -i HOME="$home" PATH="$PATH" BASH_ENV="$home/.bashrc" bash -c 'echo "$SUDO_ASKPASS"; type -t sudo' </dev/null | tr '\n' ' ')" \
+	"$prefix/libexec/sudo-dialog-askpass function "
+assert_eq "install: zsh block goes at the end" "$(tail -1 "$home/.zshenv")" "# <<< sudo-dialog <<<"
 assert_eq "install: backup of the original" "$(cmp -s "$home/.zshenv.sudo-dialog.bak" "$home/zshenv.orig" && echo same)" same
 if [ -x "$prefix/libexec/sudo-dialog-askpass" ]; then ok "install: helper copied"; else not_ok "install: helper copied"; fi
 if [ -L "$home/.local/bin/sudo-dialog" ]; then ok "install: command linked"; else not_ok "install: command linked"; fi
@@ -50,7 +58,7 @@ cp "$home/zshenv.before-conflict" "$home/.zshenv"
 
 in_home "$cli" uninstall --claude-deny >/dev/null
 assert_eq "uninstall: zshenv as before" "$(cmp -s "$home/.zshenv" "$home/zshenv.orig" && echo same)" same
-assert_eq "uninstall: bashrc keeps its content" "$(head -1 "$home/.bashrc")" 'alias ll="ls -l"'
+assert_eq "uninstall: bashrc keeps its content" "$(sed -n 2p "$home/.bashrc")" 'alias ll="ls -l"'
 assert_eq "uninstall: no block left" "$(grep -c 'sudo-dialog' "$home/.bashrc")" 0
 if [ -e "$prefix" ]; then not_ok "uninstall: program removed"; else ok "uninstall: program removed"; fi
 if [ -e "$home/.local/bin/sudo-dialog" ]; then not_ok "uninstall: command removed"; else ok "uninstall: command removed"; fi

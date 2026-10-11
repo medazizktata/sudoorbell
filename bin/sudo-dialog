@@ -70,18 +70,25 @@ has_block() {
 	[ -f "$1" ] && grep -qxF "$MARK_BEGIN" "$1"
 }
 
+# add_block FILE top|bottom: put the block in FILE, replacing any earlier one.
+# bash startup files go on top: many distributions' ~/.bashrc returns early
+# for non-interactive shells, which are the ones agents use.
 add_block() {
-	file=$1
+	file=$1 where=$2
 	if [ -f "$file" ] && [ ! -f "$file.sudo-dialog.bak" ]; then
 		cp -p "$file" "$file.sudo-dialog.bak"
 	fi
 	tmp=$(mktemp "${file}.sudo-dialog.XXXXXX")
-	if [ -f "$file" ]; then
-		without_block "$file" >"$tmp"
+	if [ "$where" = top ]; then
+		block >"$tmp"
+		[ -f "$file" ] && without_block "$file" >>"$tmp"
+	else
+		: >"$tmp"
+		[ -f "$file" ] && without_block "$file" >>"$tmp"
 		# Start the block on a line of its own.
 		[ -s "$tmp" ] && [ -n "$(tail -c 1 "$tmp")" ] && printf '\n' >>"$tmp"
+		block >>"$tmp"
 	fi
-	block >>"$tmp"
 	[ -f "$file" ] && chmod "$(file_mode "$file")" "$tmp"
 	mv -f "$tmp" "$file"
 }
@@ -167,8 +174,10 @@ cmd_install() {
 	for s in $shells; do
 		case $s in
 		zsh | bash)
+			where=bottom
+			[ "$s" = bash ] && where=top
 			for f in $(rc_files "$s"); do
-				add_block "$f"
+				add_block "$f" "$where"
 				say "  $s: $f"
 			done
 			;;

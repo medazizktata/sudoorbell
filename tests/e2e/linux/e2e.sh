@@ -119,10 +119,12 @@ if [ "$status" != 0 ]; then ok "deny: sudo fails"; else not_ok "deny: sudo fails
 # 5. Nobody answers: the dialog gives up and sudo fails, instead of hanging.
 started=$(date +%s)
 export SUDO_DIALOG_TIMEOUT=3
+: >"$log"
 request nothing
 unset SUDO_DIALOG_TIMEOUT
 elapsed=$(($(date +%s) - started))
 if [ "$status" != 0 ] && [ "$elapsed" -lt 30 ]; then ok "timeout: sudo fails after ${elapsed}s"; else not_ok "timeout: sudo fails" "status=$status after ${elapsed}s"; fi
+printf 'note  timeout: %s dialog(s) shown\n' "$(grep -c '^----$' "$log")"
 
 # 6. The shell function path, through bash reading ~/.bashrc as installed.
 run_dir=$(scratch)
