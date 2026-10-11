@@ -124,7 +124,7 @@ request nothing
 unset SUDO_DIALOG_TIMEOUT
 elapsed=$(($(date +%s) - started))
 if [ "$status" != 0 ] && [ "$elapsed" -lt 30 ]; then ok "timeout: sudo fails after ${elapsed}s"; else not_ok "timeout: sudo fails" "status=$status after ${elapsed}s"; fi
-printf 'note  timeout: %s dialog(s) shown\n' "$(grep -c '^----$' "$log")"
+assert_eq "timeout: one dialog, not one per sudo retry" "$(grep -c '^----$' "$log")" 1
 
 # 6. The shell function path, through bash reading ~/.bashrc as installed.
 run_dir=$(scratch)

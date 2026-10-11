@@ -28,4 +28,4 @@ command=$(sd_command_of "$sudo_pid")
 requester=$(sd_requester "$sudo_pid")
 attempt=$(sd_attempt "$sudo_pid")
 
-sd_show "$(sd_message "$command" "$requester" "$attempt")" "$(sd_backend)"
+sd_ask "$(sd_message "$command" "$requester" "$attempt")" "$(sd_backend)"

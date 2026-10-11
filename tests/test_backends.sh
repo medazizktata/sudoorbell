@@ -46,6 +46,10 @@ status=$?
 assert_eq "cancel: nonzero status" "$status" 1
 assert_eq "cancel: nothing on stdout" "$out" ""
 
+bytes=$(SD_STUB_EXIT=5 SD_STUB_REPLY='' sd_ask "$message" zenity | wc -c | tr -d ' ')
+assert_eq "timeout: nothing reaches sudo, not even an empty line" "$bytes" 0
+assert_eq "allow: the password reaches sudo" "$(sd_ask "$message" zenity)" secret
+
 err=$(sd_show "$message" '' 2>&1 >/dev/null)
 assert_contains "no tool: explains" "$err" "no dialog tool found"
 

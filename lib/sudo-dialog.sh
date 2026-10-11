@@ -225,3 +225,14 @@ APPLESCRIPT
 		;;
 	esac
 }
+
+# Show the dialog and print the password only if the user allowed the request.
+# Some tools print an empty line when they time out; passed on, sudo would
+# take it for a wrong password and show the dialog again.
+sd_ask() {
+	if answer=$(sd_show "$1" "$2"); then
+		printf '%s\n' "$answer"
+	else
+		return 1
+	fi
+}
