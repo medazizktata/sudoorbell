@@ -1,6 +1,8 @@
-# sudo-dialog
+# sudoorbell
 
-A password dialog for `sudo` when there is no terminal to type it in.
+A doorbell for `sudo`: when a program without a terminal (an AI agent, an
+editor task) asks for root, you get a dialog, a Touch ID prompt or a terminal
+request naming the command, and nothing runs until you answer.
 
 AI coding agents (Claude Code, Codex, Cursor), editor tasks and other tools run
 commands without a terminal. `sudo` then has nowhere to ask for your password and
@@ -11,7 +13,7 @@ sudo: a terminal is required to read the password; either use the -S option to
 read from standard input or configure an askpass helper
 ```
 
-With sudo-dialog, the same command opens a native dialog instead, naming the
+With sudoorbell, the same command opens a native dialog instead, naming the
 command and the program that asked for it:
 
 ```
@@ -34,13 +36,13 @@ the agent, its logs or the conversation.
 ## Install
 
 ```sh
-git clone https://github.com/medazizktata/sudo-dialog
-cd sudo-dialog
-./bin/sudo-dialog install
+git clone https://github.com/medazizktata/sudoorbell
+cd sudoorbell
+./bin/sudoorbell install
 ```
 
 Then open a new terminal and restart any agent that is already running.
-`sudo-dialog doctor` checks the setup without running `sudo`.
+`sudoorbell doctor` checks the setup without running `sudo`.
 
 Options:
 
@@ -50,12 +52,12 @@ Options:
 | `--claude-deny` | also stop Claude Code's agent from running `sudo` at all (see below) |
 | `--claude-mcp[=form\|browser]` | give Claude Code a `sudo` tool that asks for the password itself ([Claude Code mode](#claude-code-mode-the-password-asked-inside-claude-code)) |
 
-`install` copies the program to `~/.local/share/sudo-dialog`, links the command
+`install` copies the program to `~/.local/share/sudoorbell`, links the command
 into `~/.local/bin`, and adds a short, marked block to your shell startup files
 (`~/.zshenv`, `~/.bashrc`, `~/.bash_profile`, fish `conf.d`). Each file is backed
-up once to `<file>.sudo-dialog.bak`.
+up once to `<file>.sudoorbell.bak`.
 
-Remove everything with `sudo-dialog uninstall` (add `--claude-deny` to remove
+Remove everything with `sudoorbell uninstall` (add `--claude-deny` to remove
 that rule too).
 
 ## Requirements
@@ -90,7 +92,7 @@ The request waits for you instead:
   terminals get a one-line notice, and you answer from any terminal:
 
   ```
-  $ sudo-dialog approve
+  $ sudoorbell approve
 
   Run as root:
 
@@ -103,11 +105,11 @@ The request waits for you instead:
   Password (leave empty to deny):
   ```
 
-  `sudo-dialog approve --deny` refuses everything waiting.
+  `sudoorbell approve --deny` refuses everything waiting.
 
 The password goes from your terminal to `sudo` through a pipe in a private
 (`0700`) directory; it is never echoed or written to a file. An unanswered
-request gives up after `SUDO_DIALOG_TIMEOUT` seconds. A Mac reached over SSH
+request gives up after `SUDOORBELL_TIMEOUT` seconds. A Mac reached over SSH
 counts as having no desktop.
 
 Two limits:
@@ -134,16 +136,16 @@ commands. That prompt has its own **Use Password…**, so:
 - **Touch ID** or **Use Password…** in Apple's prompt: sudo runs.
 - **Cancel** in Apple's prompt: sudo does not run. No second prompt follows.
 - **Touch ID cannot be used** (a Mac without a sensor, the lid closed with no
-  Touch ID keyboard): the sudo-dialog window asks for the password instead.
+  Touch ID keyboard): the sudoorbell window asks for the password instead.
 
 Why the shell function changes for this: macOS skips Touch ID when `sudo` is
 given `-A`. With Touch ID on, the function starts `sudo` without `-A` and sets
-`DISPLAY` (to `sudo-dialog`, if it was not set); with no terminal and a
+`DISPLAY` (to `sudoorbell`, if it was not set); with no terminal and a
 display, `sudo` calls the dialog by itself, after Touch ID. That `DISPLAY` may
 reach the command run as root, depending on your sudoers `env_keep`.
 
 Apple's prompt does not say which command will run; it only says that sudo
-wants to run a command as administrator. The sudo-dialog window does. If seeing
+wants to run a command as administrator. The sudoorbell window does. If seeing
 the command matters more to you than the fingerprint, leave Touch ID off.
 
 ## Using it with agents
@@ -165,8 +167,8 @@ needs no dialog window: a `sudo` tool (an MCP server) whose password prompt
 Claude Code itself shows.
 
 ```sh
-sudo-dialog install --claude-mcp --claude-deny           # form inside Claude Code
-sudo-dialog install --claude-mcp=browser --claude-deny   # local page, hidden field
+sudoorbell install --claude-mcp --claude-deny           # form inside Claude Code
+sudoorbell install --claude-mcp=browser --claude-deny   # local page, hidden field
 ```
 
 With `--claude-deny` the agent cannot run `sudo` in the shell, so the tool is
@@ -175,7 +177,7 @@ its only way to root, and every call needs your password again (it runs
 `apt-get install curl` as root, it calls the tool and you see:
 
 ```
-MCP server "sudo-dialog" requests your input
+MCP server "sudoorbell" requests your input
 Run as root: sudo apt-get install curl
 Reason: install curl for the build
 ❯ * Password: Type something…
@@ -205,10 +207,10 @@ browser mode the one-time page address appears in Claude Code's MCP log; it
 only lets someone answer that one request while it is open.
 
 Claude Code still asks its usual permission for the tool call, before the
-password form. Allow `mcp__sudo-dialog__sudo` in `/permissions` if you want the
+password form. Allow `mcp__sudoorbell__sudo` in `/permissions` if you want the
 password form to be the only question.
 
-Needs `python3`. Remove with `sudo-dialog uninstall --claude-mcp`.
+Needs `python3`. Remove with `sudoorbell uninstall --claude-mcp`.
 
 ### Other MCP clients
 
@@ -223,18 +225,18 @@ it. Tested with a stand-in `sudo` and a dummy password:
 | cursor-agent 2026.09.02 (terminal) | form only | declined without showing a form | refused: no URL support |
 
 Register it in another client the way that client adds stdio MCP servers, with
-the command `~/.local/share/sudo-dialog/mcp/sudo-dialog-mcp` and, for browser
-mode, the environment variable `SUDO_DIALOG_MCP_MODE=browser`. For Codex:
+the command `~/.local/share/sudoorbell/mcp/sudoorbell-mcp` and, for browser
+mode, the environment variable `SUDOORBELL_MCP_MODE=browser`. For Codex:
 
 ```sh
-codex mcp add sudo-dialog -- ~/.local/share/sudo-dialog/mcp/sudo-dialog-mcp
+codex mcp add sudoorbell -- ~/.local/share/sudoorbell/mcp/sudoorbell-mcp
 ```
 
 ## How it works
 
 `sudo` can get the password from a helper program instead of a terminal: the
 *askpass* program, named by `SUDO_ASKPASS` or by `Path askpass` in
-`/etc/sudo.conf`. sudo-dialog provides that helper, and two ways for `sudo` to
+`/etc/sudo.conf`. sudoorbell provides that helper, and two ways for `sudo` to
 use it:
 
 1. **`SUDO_ASKPASS` is exported** from your shell startup file, so every program
@@ -264,10 +266,10 @@ The helper:
 
 | Variable | Default | |
 |---|---|---|
-| `SUDO_DIALOG_TIMEOUT` | `120` | seconds before an unanswered dialog counts as Deny |
-| `SUDO_DIALOG_BACKEND` | auto | force a dialog tool, e.g. `kdialog` |
-| `SUDO_DIALOG_TITLE` | `Administrator access` | window title |
-| `SUDO_DIALOG_NOTIFY` | `1` | without a desktop, `0` stops the notice to your terminals |
+| `SUDOORBELL_TIMEOUT` | `120` | seconds before an unanswered dialog counts as Deny |
+| `SUDOORBELL_BACKEND` | auto | force a dialog tool, e.g. `kdialog` |
+| `SUDOORBELL_TITLE` | `Administrator access` | window title |
+| `SUDOORBELL_NOTIFY` | `1` | without a desktop, `0` stops the notice to your terminals |
 
 ## Security
 
@@ -279,7 +281,7 @@ The helper:
   again. That includes commands an agent runs, unless you use `--claude-deny`
   or the agent's own permission rules.
 - A program running as you can always draw a fake password dialog of its own.
-  No askpass helper can prevent that; sudo-dialog only refuses to *be* that
+  No askpass helper can prevent that; sudoorbell only refuses to *be* that
   dialog for anything but `sudo`.
 
 ## Development
@@ -294,8 +296,8 @@ python tests/clients/sdk_client.py  # the MCP server under the official MCP SDK 
 The unit tests replace `sudo` and every dialog tool with a stub that records
 how it was called. The end-to-end test runs the real thing in a container,
 with `xdotool` typing into the dialog: right password, wrong then right, Deny,
-timeout, the bash function, and the failure without sudo-dialog as a baseline.
-A second run has no display: requests answered with `sudo-dialog approve` and
+timeout, the bash function, and the failure without sudoorbell as a baseline.
+A second run has no display: requests answered with `sudoorbell approve` and
 in a real tmux popup.
 CI runs both, plus `shellcheck`.
 

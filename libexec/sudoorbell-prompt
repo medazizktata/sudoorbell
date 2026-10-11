@@ -1,6 +1,6 @@
 #!/bin/sh
-# sudo-dialog-prompt REQUEST PIPE: answer one waiting sudo request in this
-# terminal. Used by `sudo-dialog approve` and by the tmux popup. Shows the
+# sudoorbell-prompt REQUEST PIPE: answer one waiting sudo request in this
+# terminal. Used by `sudoorbell approve` and by the tmux popup. Shows the
 # request, reads the password without echoing it, and writes the answer to the
 # request's pipe: "P" and the password to allow, "D" to deny.
 

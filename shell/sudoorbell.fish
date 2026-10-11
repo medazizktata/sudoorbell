@@ -1,10 +1,10 @@
-# sudo-dialog shell integration for fish, sourced from config.fish by
-# `sudo-dialog install`, which also sets SUDO_DIALOG_HOME. Same behaviour as
-# shell/sudo-dialog.sh: export SUDO_ASKPASS, and add -A when there is no
+# sudoorbell shell integration for fish, sourced from config.fish by
+# `sudoorbell install`, which also sets SUDOORBELL_HOME. Same behaviour as
+# shell/sudoorbell.sh: export SUDO_ASKPASS, and add -A when there is no
 # terminal.
 
-if set -q SUDO_DIALOG_HOME; and test -x "$SUDO_DIALOG_HOME/libexec/sudo-dialog-askpass"
-    set -gx SUDO_ASKPASS "$SUDO_DIALOG_HOME/libexec/sudo-dialog-askpass"
+if set -q SUDOORBELL_HOME; and test -x "$SUDOORBELL_HOME/libexec/sudoorbell-askpass"
+    set -gx SUDO_ASKPASS "$SUDOORBELL_HOME/libexec/sudoorbell-askpass"
 
     function sudo --wraps sudo --description 'sudo, with a password dialog when there is no terminal'
         # A terminal is available: sudo asks there, as usual.
@@ -42,7 +42,7 @@ if set -q SUDO_DIALOG_HOME; and test -x "$SUDO_DIALOG_HOME/libexec/sudo-dialog-a
         # display, sudo uses SUDO_ASKPASS by itself, after Touch ID.
         if test (uname -s) = Darwin
             and grep -q -E '^[[:space:]]*auth[[:space:]].*pam_(tid|watchid)\.so' /etc/pam.d/sudo_local /etc/pam.d/sudo 2>/dev/null
-            set -q DISPLAY; or set -lx DISPLAY sudo-dialog
+            set -q DISPLAY; or set -lx DISPLAY sudoorbell
             command sudo $argv
             return
         end

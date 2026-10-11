@@ -1,14 +1,14 @@
 #!/bin/sh
 # Only sudo can get a password out of the dialog.
 . "$(dirname "$0")/helpers.sh"
-. "$root/lib/sudo-dialog.sh"
+. "$root/lib/sudoorbell.sh"
 
 SD_STUB_LOG=$(scratch)/log
 export SD_STUB_LOG
 : >"$SD_STUB_LOG"
 bin=$(stub_bin zenity osascript)
 
-out=$(PATH=$bin:$PATH DISPLAY=:0 "$root/libexec/sudo-dialog-askpass" "Password:" 2>"$SD_STUB_LOG.err")
+out=$(PATH=$bin:$PATH DISPLAY=:0 "$root/libexec/sudoorbell-askpass" "Password:" 2>"$SD_STUB_LOG.err")
 status=$?
 assert_eq "direct call: refused" "$status" 1
 assert_eq "direct call: no password printed" "$out" ""
@@ -18,7 +18,7 @@ assert_eq "direct call: no dialog shown" "$(cat "$SD_STUB_LOG")" ""
 # Inside a sandbox that hides processes (Codex on macOS), the caller cannot
 # be checked: refuse, and say why.
 if command -v sandbox-exec >/dev/null 2>&1; then
-	err=$(sandbox-exec -p '(version 1)(allow default)(deny process-info*)' "$root/libexec/sudo-dialog-askpass" Password: 2>&1 >/dev/null)
+	err=$(sandbox-exec -p '(version 1)(allow default)(deny process-info*)' "$root/libexec/sudoorbell-askpass" Password: 2>&1 >/dev/null)
 	assert_contains "sandboxed: refused with the reason" "$err" "cannot check the caller here"
 fi
 

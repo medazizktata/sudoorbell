@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-server = os.path.join(root, "mcp", "sudo-dialog-mcp")
+server = os.path.join(root, "mcp", "sudoorbell-mcp")
 stub = os.path.join(root, "tests", "stubs", "sudo-password-stub")
 passes = fails = 0
 
@@ -54,7 +54,7 @@ def session(answers, arguments, capabilities=None, mode="form", browser=(), brow
     global last_pages, last_notes
     last_pages, last_notes = [], []
     log = tempfile.NamedTemporaryFile(delete=False).name
-    env = dict(os.environ, SUDO_DIALOG_MCP_SUDO=stub, SD_STUB_LOG=log, SUDO_DIALOG_MCP_MODE=mode, SUDO_DIALOG_MCP_WAIT="5")
+    env = dict(os.environ, SUDOORBELL_MCP_SUDO=stub, SD_STUB_LOG=log, SUDOORBELL_MCP_MODE=mode, SUDOORBELL_MCP_WAIT="5")
     p = subprocess.Popen([server], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env, text=True)
     wire = []
 

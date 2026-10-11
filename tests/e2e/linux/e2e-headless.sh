@@ -1,6 +1,6 @@
 #!/bin/sh
 # End to end without a desktop, with real sudo: a server or container where
-# requests are answered with `sudo-dialog approve`, or in a tmux popup. Runs in
+# requests are answered with `sudoorbell approve`, or in a tmux popup. Runs in
 # the image from tests/e2e/linux/Dockerfile as user "tester" (password
 # correct-horse), with no display at all.
 
@@ -13,9 +13,9 @@ password=correct-horse
 unset DISPLAY WAYLAND_DISPLAY
 export TERM=xterm-256color
 
-/src/bin/sudo-dialog install --shell bash >/dev/null
-cli=$HOME/.local/bin/sudo-dialog
-state=/tmp/sudo-dialog-$(id -u)
+/src/bin/sudoorbell install --shell bash >/dev/null
+cli=$HOME/.local/bin/sudoorbell
+state=/tmp/sudoorbell-$(id -u)
 
 agent=$(scratch)/fake-agent
 cp "$(command -v dash || command -v sh)" "$agent"
@@ -35,7 +35,7 @@ waiting() {
 	return 1
 }
 
-# 1. Answer with `sudo-dialog approve` in another terminal. A second terminal
+# 1. Answer with `sudoorbell approve` in another terminal. A second terminal
 #    of the same user is open meanwhile, to receive the notice.
 run=$(scratch)
 printf '%s\n' "sleep 6" >"$run/idle"
@@ -53,7 +53,7 @@ assert_eq "approve: sudo runs the command as root" "$(cat "$run/out")" 0
 assert_contains "approve: shows the command" "$screen" "sudo -A -k id -u"
 assert_contains "approve: shows who asked" "$screen" "Requested by: fake-agent"
 assert_not_contains "approve: password not shown" "$screen" "$password"
-assert_contains "approve: the agent's output said how to answer" "$(cat "$run/err")" "sudo-dialog approve"
+assert_contains "approve: the agent's output said how to answer" "$(cat "$run/err")" "sudoorbell approve"
 assert_contains "notice: the user's other terminal was told" "$(cat "$run/other-terminal")" "wants to run as root"
 
 # 2. Deny from a terminal.
@@ -68,10 +68,10 @@ if [ "$(cat "$run/status")" != 0 ]; then ok "deny: sudo fails"; else not_ok "den
 # 3. Nobody answers.
 run=$(scratch)
 started=$(date +%s)
-export SUDO_DIALOG_TIMEOUT=3
+export SUDOORBELL_TIMEOUT=3
 ask "$run"
 wait $asker
-unset SUDO_DIALOG_TIMEOUT
+unset SUDOORBELL_TIMEOUT
 elapsed=$(($(date +%s) - started))
 if [ "$(cat "$run/status")" != 0 ] && [ "$elapsed" -lt 30 ]; then ok "timeout: sudo fails after ${elapsed}s"; else not_ok "timeout: sudo fails" "after ${elapsed}s"; fi
 if ls "$state"/req.* >/dev/null 2>&1; then not_ok "timeout: nothing left waiting"; else ok "timeout: nothing left waiting"; fi

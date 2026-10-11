@@ -20,8 +20,8 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 	sleep 0.5
 done
 
-/src/bin/sudo-dialog install --shell bash >/dev/null
-askpass=$HOME/.local/share/sudo-dialog/libexec/sudo-dialog-askpass
+/src/bin/sudoorbell install --shell bash >/dev/null
+askpass=$HOME/.local/share/sudoorbell/libexec/sudoorbell-askpass
 
 # Record every zenity call (the dialog text), then run the real one.
 spy=$(scratch)
@@ -80,7 +80,7 @@ request() {
 }
 nothing() { :; }
 
-# 1. Without sudo-dialog, sudo has no way to ask: the problem being solved.
+# 1. Without sudoorbell, sudo has no way to ask: the problem being solved.
 #    Also checks this harness really has no terminal.
 (
 	unset SUDO_ASKPASS
@@ -120,10 +120,10 @@ if [ "$status" != 0 ]; then ok "deny: sudo fails"; else not_ok "deny: sudo fails
 
 # 5. Nobody answers: the dialog gives up and sudo fails, instead of hanging.
 started=$(date +%s)
-export SUDO_DIALOG_TIMEOUT=3
+export SUDOORBELL_TIMEOUT=3
 : >"$log"
 request nothing
-unset SUDO_DIALOG_TIMEOUT
+unset SUDOORBELL_TIMEOUT
 elapsed=$(($(date +%s) - started))
 if [ "$status" != 0 ] && [ "$elapsed" -lt 30 ]; then ok "timeout: sudo fails after ${elapsed}s"; else not_ok "timeout: sudo fails" "status=$status after ${elapsed}s"; fi
 assert_eq "timeout: one dialog, not one per sudo retry" "$(grep -c '^----$' "$log")" 1

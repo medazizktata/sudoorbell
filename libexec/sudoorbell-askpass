@@ -1,15 +1,15 @@
 #!/bin/sh
-# sudo-dialog-askpass: the program sudo runs (SUDO_ASKPASS) to get your
+# sudoorbell-askpass: the program sudo runs (SUDO_ASKPASS) to get your
 # password when there is no terminal to ask in. It shows a dialog naming the
 # command and the program that asked, and prints what you type to stdout, which
 # only sudo reads. Without a desktop, the request waits for an answer from a
-# terminal (`sudo-dialog approve`) or a tmux popup instead.
+# terminal (`sudoorbell approve`) or a tmux popup instead.
 #
 # sudo passes its own prompt as $1; the dialog builds a clearer one instead.
 
 here=$(cd "$(dirname "$0")" && pwd -P) || exit 1
-# shellcheck source=../lib/sudo-dialog.sh
-. "$here/../lib/sudo-dialog.sh" || exit 1
+# shellcheck source=../lib/sudoorbell.sh
+. "$here/../lib/sudoorbell.sh" || exit 1
 SD_LIBEXEC=$here
 
 sudo_pid=$PPID

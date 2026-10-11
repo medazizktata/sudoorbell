@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""sudo-dialog-mcp: run commands as root from Claude Code, with the password
+"""sudoorbell-mcp: run commands as root from Claude Code, with the password
 asked for by Claude Code itself.
 
 An MCP server (stdio) with one tool, `sudo`. When the agent calls it, the
@@ -20,10 +20,10 @@ tool's result, so the model never sees it. Every call needs the password
 again (`sudo -k`), so the agent cannot ride on a cached sudo session.
 
 Standard library only. Environment:
-  SUDO_DIALOG_MCP_MODE     form or browser (default: form)
-  SUDO_DIALOG_MCP_TIMEOUT  seconds a command may run (default: 600)
-  SUDO_DIALOG_MCP_WAIT     browser mode: seconds to wait for the page (default: 300)
-  SUDO_DIALOG_MCP_SUDO     sudo binary to run (default: sudo; tests use a stub)
+  SUDOORBELL_MCP_MODE     form or browser (default: form)
+  SUDOORBELL_MCP_TIMEOUT  seconds a command may run (default: 600)
+  SUDOORBELL_MCP_WAIT     browser mode: seconds to wait for the page (default: 300)
+  SUDOORBELL_MCP_SUDO     sudo binary to run (default: sudo; tests use a stub)
 """
 
 import html
@@ -42,10 +42,10 @@ PROTOCOL_VERSION = "2025-11-25"
 VERSION = "0.1.0"
 MAX_ATTEMPTS = 3
 MAX_OUTPUT = 100_000
-MODE = os.environ.get("SUDO_DIALOG_MCP_MODE", "form")
-SUDO = os.environ.get("SUDO_DIALOG_MCP_SUDO", "sudo")
-TIMEOUT = int(os.environ.get("SUDO_DIALOG_MCP_TIMEOUT", "600"))
-WAIT = int(os.environ.get("SUDO_DIALOG_MCP_WAIT", "300"))
+MODE = os.environ.get("SUDOORBELL_MCP_MODE", "form")
+SUDO = os.environ.get("SUDOORBELL_MCP_SUDO", "sudo")
+TIMEOUT = int(os.environ.get("SUDOORBELL_MCP_TIMEOUT", "600"))
+WAIT = int(os.environ.get("SUDOORBELL_MCP_WAIT", "300"))
 
 TOOL = {
     "name": "sudo",
@@ -99,7 +99,7 @@ class Peer:
     def request(self, method, params):
         """Send a request to the client and wait for its response."""
         self.next_id += 1
-        request_id = f"sudo-dialog-{self.next_id}"
+        request_id = f"sudoorbell-{self.next_id}"
         self.send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
         while True:
             line = sys.stdin.readline()
@@ -401,7 +401,7 @@ def main():
                 "result": {
                     "protocolVersion": PROTOCOL_VERSION,
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "sudo-dialog", "version": VERSION},
+                    "serverInfo": {"name": "sudoorbell", "version": VERSION},
                 },
             })
         elif method == "tools/list":

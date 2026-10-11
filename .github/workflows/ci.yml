@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck bin/sudo-dialog lib/sudo-dialog.sh libexec/sudo-dialog-askpass libexec/sudo-dialog-prompt shell/sudo-dialog.sh tests/*.sh tests/e2e/linux/*.sh tests/e2e/minimal/run.sh
+      - run: shellcheck bin/sudoorbell lib/sudoorbell.sh libexec/sudoorbell-askpass libexec/sudoorbell-prompt shell/sudoorbell.sh tests/*.sh tests/e2e/linux/*.sh tests/e2e/minimal/run.sh
 
   unit:
     strategy:

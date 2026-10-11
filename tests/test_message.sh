@@ -1,7 +1,7 @@
 #!/bin/sh
 # What the dialog says.
 . "$(dirname "$0")/helpers.sh"
-. "$root/lib/sudo-dialog.sh"
+. "$root/lib/sudoorbell.sh"
 
 m=$(sd_message "sudo -A apt install curl" codex 1)
 assert_contains "names the command" "$m" "sudo -A apt install curl"

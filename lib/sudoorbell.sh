@@ -1,17 +1,17 @@
 # shellcheck shell=sh
-# sudo-dialog library: builds the password dialog and shows it with whatever
-# dialog tool the system has. Sourced by libexec/sudo-dialog-askpass and by the
+# sudoorbell library: builds the password dialog and shows it with whatever
+# dialog tool the system has. Sourced by libexec/sudoorbell-askpass and by the
 # tests. POSIX sh. Nothing here writes to stdout except the dialog backend
 # itself, because stdout is the channel sudo reads the password from.
 
-SD_TITLE=${SUDO_DIALOG_TITLE:-Administrator access}
-SD_TIMEOUT=${SUDO_DIALOG_TIMEOUT:-120}
+SD_TITLE=${SUDOORBELL_TITLE:-Administrator access}
+SD_TIMEOUT=${SUDOORBELL_TIMEOUT:-120}
 SD_MAX_COMMAND=300
-# Where sudo-dialog-prompt lives; the askpass helper sets it.
+# Where sudoorbell-prompt lives; the askpass helper sets it.
 SD_LIBEXEC=${SD_LIBEXEC:-}
 
 sd_err() {
-	printf 'sudo-dialog: %s\n' "$*" >&2
+	printf 'sudoorbell: %s\n' "$*" >&2
 }
 
 # The ps binary, by absolute path: the gate must not trust the caller's PATH.
@@ -121,7 +121,7 @@ sd_requester() {
 # A private directory for per-request state, owned by us and closed to others.
 sd_state_dir() {
 	base=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}
-	dir=${base%/}/sudo-dialog-$(id -u)
+	dir=${base%/}/sudoorbell-$(id -u)
 	if [ ! -d "$dir" ]; then
 		(umask 077 && mkdir "$dir") 2>/dev/null || return 1
 	fi
@@ -262,12 +262,12 @@ sd_tmux_has_popup() {
 	[ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 2 ]; }
 }
 
-# How to ask. SUDO_DIALOG_BACKEND overrides the choice. With a desktop: a
+# How to ask. SUDOORBELL_BACKEND overrides the choice. With a desktop: a
 # dialog window. Without one: a tmux popup when the request comes from inside
-# tmux, otherwise "terminal", where you answer with `sudo-dialog approve`.
+# tmux, otherwise "terminal", where you answer with `sudoorbell approve`.
 sd_backend() {
-	if [ -n "${SUDO_DIALOG_BACKEND:-}" ]; then
-		echo "$SUDO_DIALOG_BACKEND"
+	if [ -n "${SUDOORBELL_BACKEND:-}" ]; then
+		echo "$SUDOORBELL_BACKEND"
 		return
 	fi
 	if sd_has_gui; then
@@ -365,14 +365,14 @@ sd_ask() {
 #
 # The request waits in the private state directory: req.<pid> holds the text
 # to show and fifo.<pid> is the pipe the answer comes back through. Whoever
-# answers (`sudo-dialog approve` in any terminal, or the tmux popup) writes one
+# answers (`sudoorbell approve` in any terminal, or the tmux popup) writes one
 # line to the pipe: "P" and the password to allow, "D" to deny.
 
 # Tell the user's terminals that a request is waiting: an agent usually shows
 # a command's output only once it finishes, so this may be the only sign.
-# SUDO_DIALOG_NOTIFY=0 turns it off.
+# SUDOORBELL_NOTIFY=0 turns it off.
 sd_notify_ttys() {
-	[ "${SUDO_DIALOG_NOTIFY:-1}" = 0 ] && return 0
+	[ "${SUDOORBELL_NOTIFY:-1}" = 0 ] && return 0
 	notice=$1
 	uid=$(id -u)
 	for t in /dev/pts/[0-9]* /dev/ttys[0-9]*; do
@@ -418,12 +418,12 @@ sd_broker() {
 	command=$(printf '%s\n' "$message" | sed -n 3p)
 	if [ "$backend" = tmux ]; then
 		tmux display-popup -E -T " $SD_TITLE " -w 80 -h 16 \
-			"'$SD_LIBEXEC/sudo-dialog-prompt' '$req' '$fifo'" >/dev/null 2>&1 &
+			"'$SD_LIBEXEC/sudoorbell-prompt' '$req' '$fifo'" >/dev/null 2>&1 &
 	else
-		sd_notify_ttys "sudo-dialog: a program wants to run as root: $command -- answer with: sudo-dialog approve"
+		sd_notify_ttys "sudoorbell: a program wants to run as root: $command -- answer with: sudoorbell approve"
 	fi
 	sd_err "waiting for approval to run as root: $command"
-	sd_err "answer in any terminal with: sudo-dialog approve (gives up after ${SD_TIMEOUT}s)"
+	sd_err "answer in any terminal with: sudoorbell approve (gives up after ${SD_TIMEOUT}s)"
 
 	answer=$(sd_read_answer "$fifo" "$SD_TIMEOUT")
 	case $answer in

@@ -36,7 +36,7 @@ finish() {
 # A fresh scratch directory. Left in place on purpose: nothing here deletes
 # directories by variable.
 scratch() {
-	mktemp -d "${TMPDIR:-/tmp}/sudo-dialog-test.XXXXXX"
+	mktemp -d "${TMPDIR:-/tmp}/sudoorbell-test.XXXXXX"
 }
 
 # A bin directory whose dialog tools (and sudo) are all the recording stub.

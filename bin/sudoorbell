@@ -1,11 +1,11 @@
 #!/bin/sh
-# sudo-dialog: set up, check and remove the sudo password dialog.
+# sudoorbell: set up, check and remove the sudo password dialog.
 #
-#   sudo-dialog install [--shell zsh|bash|fish|sh|all] [--claude-deny] [--claude-mcp[=form|browser]]
-#   sudo-dialog uninstall [--claude-deny] [--claude-mcp]
-#   sudo-dialog doctor
-#   sudo-dialog preview
-#   sudo-dialog approve [--deny]
+#   sudoorbell install [--shell zsh|bash|fish|sh|all] [--claude-deny] [--claude-mcp[=form|browser]]
+#   sudoorbell uninstall [--claude-deny] [--claude-mcp]
+#   sudoorbell doctor
+#   sudoorbell preview
+#   sudoorbell approve [--deny]
 #
 # approve answers sudo requests waiting for you when there is no desktop to
 # show a dialog on (SSH, servers, containers). --claude-mcp gives Claude Code a
@@ -15,10 +15,10 @@
 set -eu
 
 VERSION=0.1.0
-MARK_BEGIN='# >>> sudo-dialog >>>'
-MARK_END='# <<< sudo-dialog <<<'
+MARK_BEGIN='# >>> sudoorbell >>>'
+MARK_END='# <<< sudoorbell <<<'
 CLAUDE_RULE='Bash(sudo:*)'
-MCP_NAME=sudo-dialog
+MCP_NAME=sudoorbell
 
 # Where this program really is: the installed command is a symlink in
 # ~/.local/bin, and the library lives next to the real file.
@@ -31,17 +31,17 @@ while [ -L "$self" ]; do
 	esac
 done
 src=$(cd "$(dirname "$self")/.." && pwd -P)
-prefix=${SUDO_DIALOG_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/sudo-dialog}
-bindir=${SUDO_DIALOG_BINDIR:-$HOME/.local/bin}
+prefix=${SUDOORBELL_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/sudoorbell}
+bindir=${SUDOORBELL_BINDIR:-$HOME/.local/bin}
 claude_settings=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json
-fish_conf=${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/sudo-dialog.fish
+fish_conf=${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/sudoorbell.fish
 
-# shellcheck source=../lib/sudo-dialog.sh
-. "$src/lib/sudo-dialog.sh"
+# shellcheck source=../lib/sudoorbell.sh
+. "$src/lib/sudoorbell.sh"
 
 say() { printf '%s\n' "$*"; }
 die() {
-	printf 'sudo-dialog: %s\n' "$*" >&2
+	printf 'sudoorbell: %s\n' "$*" >&2
 	exit 1
 }
 
@@ -68,13 +68,13 @@ rc_files() {
 
 block() {
 	printf '%s\n' "$MARK_BEGIN" \
-		"# Password dialog for sudo when there is no terminal. Remove with: sudo-dialog uninstall" \
-		"export SUDO_DIALOG_HOME=\"$prefix\"" \
-		"[ -r \"\$SUDO_DIALOG_HOME/shell/sudo-dialog.sh\" ] && . \"\$SUDO_DIALOG_HOME/shell/sudo-dialog.sh\"" \
+		"# Password dialog for sudo when there is no terminal. Remove with: sudoorbell uninstall" \
+		"export SUDOORBELL_HOME=\"$prefix\"" \
+		"[ -r \"\$SUDOORBELL_HOME/shell/sudoorbell.sh\" ] && . \"\$SUDOORBELL_HOME/shell/sudoorbell.sh\"" \
 		"$MARK_END"
 }
 
-# Print file $1 without the sudo-dialog block.
+# Print file $1 without the sudoorbell block.
 without_block() {
 	awk -v b="$MARK_BEGIN" -v e="$MARK_END" '
 		$0 == b { inside = 1; next }
@@ -92,10 +92,10 @@ has_block() {
 # for non-interactive shells, which are the ones agents use.
 add_block() {
 	file=$1 where=$2
-	if [ -f "$file" ] && [ ! -f "$file.sudo-dialog.bak" ]; then
-		cp -p "$file" "$file.sudo-dialog.bak"
+	if [ -f "$file" ] && [ ! -f "$file.sudoorbell.bak" ]; then
+		cp -p "$file" "$file.sudoorbell.bak"
 	fi
-	tmp=$(mktemp "${file}.sudo-dialog.XXXXXX")
+	tmp=$(mktemp "${file}.sudoorbell.XXXXXX")
 	if [ "$where" = top ]; then
 		block >"$tmp"
 		[ -f "$file" ] && without_block "$file" >>"$tmp"
@@ -113,7 +113,7 @@ add_block() {
 remove_block() {
 	file=$1
 	has_block "$file" || return 0
-	tmp=$(mktemp "${file}.sudo-dialog.XXXXXX")
+	tmp=$(mktemp "${file}.sudoorbell.XXXXXX")
 	without_block "$file" >"$tmp"
 	chmod "$(file_mode "$file")" "$tmp"
 	mv -f "$tmp" "$file"
@@ -151,7 +151,7 @@ claude_edit() {
 	command -v jq >/dev/null 2>&1 || die "jq is needed to edit $claude_settings"
 	mkdir -p "$(dirname "$claude_settings")"
 	[ -f "$claude_settings" ] || printf '{}\n' >"$claude_settings"
-	[ -f "$claude_settings.sudo-dialog.bak" ] || cp -p "$claude_settings" "$claude_settings.sudo-dialog.bak"
+	[ -f "$claude_settings.sudoorbell.bak" ] || cp -p "$claude_settings" "$claude_settings.sudoorbell.bak"
 	tmp=$(mktemp "$claude_settings.XXXXXX")
 	jq --arg r "$CLAUDE_RULE" "$1" "$claude_settings" >"$tmp"
 	mv -f "$tmp" "$claude_settings"
@@ -176,8 +176,8 @@ cmd_install() {
 		shift
 	done
 	case $prefix in
-	/*/sudo-dialog) ;;
-	*) die "refusing to install to $prefix: the directory must be an absolute path ending in /sudo-dialog" ;;
+	/*/sudoorbell) ;;
+	*) die "refusing to install to $prefix: the directory must be an absolute path ending in /sudoorbell" ;;
 	esac
 	[ -z "$shells" ] || [ "$shells" = all ] && shells=$(detect_shells)
 	shells=$(printf '%s' "$shells" | tr ',' ' ')
@@ -190,10 +190,10 @@ cmd_install() {
 			cp -R "$src/$d" "$prefix/$d"
 		done
 	fi
-	chmod 755 "$prefix/bin/sudo-dialog" "$prefix/libexec/sudo-dialog-askpass" "$prefix/libexec/sudo-dialog-prompt" "$prefix/mcp/sudo-dialog-mcp"
+	chmod 755 "$prefix/bin/sudoorbell" "$prefix/libexec/sudoorbell-askpass" "$prefix/libexec/sudoorbell-prompt" "$prefix/mcp/sudoorbell-mcp"
 	mkdir -p "$bindir"
-	ln -sf "$prefix/bin/sudo-dialog" "$bindir/sudo-dialog"
-	say "Installed to $prefix (command: $bindir/sudo-dialog)"
+	ln -sf "$prefix/bin/sudoorbell" "$bindir/sudoorbell"
+	say "Installed to $prefix (command: $bindir/sudoorbell)"
 
 	for s in $shells; do
 		case $s in
@@ -211,9 +211,9 @@ cmd_install() {
 			mkdir -p "$(dirname "$fish_conf")"
 			{
 				printf '%s\n' "$MARK_BEGIN"
-				printf 'set -gx SUDO_DIALOG_HOME "%s"\n' "$prefix"
+				printf 'set -gx SUDOORBELL_HOME "%s"\n' "$prefix"
 				# shellcheck disable=SC2016 # expanded by fish, not here
-				printf 'source "$SUDO_DIALOG_HOME/shell/sudo-dialog.fish"\n'
+				printf 'source "$SUDOORBELL_HOME/shell/sudoorbell.fish"\n'
 				printf '%s\n' "$MARK_END"
 			} >"$fish_conf"
 			say "  fish: $fish_conf"
@@ -223,19 +223,23 @@ cmd_install() {
 	done
 
 	if [ -n "$claude" ]; then
-		# shellcheck disable=SC2016 # $r is a jq variable
-		claude_edit '.permissions.deny = (((.permissions.deny // []) - [$r]) + [$r])'
-		say "  Claude Code: added deny rule $CLAUDE_RULE to $claude_settings"
+		if claude_has_rule; then
+			say "  Claude Code: deny rule $CLAUDE_RULE already in $claude_settings"
+		else
+			# shellcheck disable=SC2016 # $r is a jq variable
+			claude_edit '.permissions.deny = (((.permissions.deny // []) - [$r]) + [$r])'
+			say "  Claude Code: added deny rule $CLAUDE_RULE to $claude_settings"
+		fi
 	fi
 	if [ -n "$mcp" ]; then
 		command -v claude >/dev/null 2>&1 || die "claude not found; cannot register the Claude Code sudo tool"
 		command -v python3 >/dev/null 2>&1 || die "python3 is needed for the Claude Code sudo tool"
 		claude mcp remove --scope user "$MCP_NAME" >/dev/null 2>&1 || true
-		claude mcp add "$MCP_NAME" --scope user -e "SUDO_DIALOG_MCP_MODE=$mcp" -- "$prefix/mcp/sudo-dialog-mcp" >/dev/null
+		claude mcp add "$MCP_NAME" --scope user -e "SUDOORBELL_MCP_MODE=$mcp" -- "$prefix/mcp/sudoorbell-mcp" >/dev/null
 		say "  Claude Code: sudo tool registered ($mcp mode); the password is asked $(
 			[ "$mcp" = form ] && echo "inside Claude Code, visible while you type" || echo "on a local page with a hidden field")"
 	fi
-	say "Open a new terminal (and restart any AI agent) to pick it up. Check with: sudo-dialog doctor"
+	say "Open a new terminal (and restart any AI agent) to pick it up. Check with: sudoorbell doctor"
 }
 
 cmd_uninstall() {
@@ -260,13 +264,13 @@ cmd_uninstall() {
 		rm -f "$fish_conf"
 		say "Removed $fish_conf"
 	fi
-	if [ -L "$bindir/sudo-dialog" ]; then
-		rm -f "$bindir/sudo-dialog"
+	if [ -L "$bindir/sudoorbell" ]; then
+		rm -f "$bindir/sudoorbell"
 	fi
 	# Only ever delete a directory that is recognisably ours.
 	case $prefix in
-	*/sudo-dialog)
-		if [ "$src" != "$prefix" ] && [ -x "$prefix/libexec/sudo-dialog-askpass" ]; then
+	*/sudoorbell)
+		if [ "$src" != "$prefix" ] && [ -x "$prefix/libexec/sudoorbell-askpass" ]; then
 			rm -rf "${prefix:?}"
 			say "Removed $prefix"
 		fi
@@ -290,7 +294,7 @@ check() {
 
 cmd_doctor() {
 	os=$(sd_os)
-	say "sudo-dialog $VERSION on $os"
+	say "sudoorbell $VERSION on $os"
 	sudo_bin=$(command -v sudo 2>/dev/null || true)
 	if [ -n "$sudo_bin" ]; then
 		check OK "sudo: $sudo_bin ($("$sudo_bin" -V 2>/dev/null | head -1))"
@@ -298,15 +302,15 @@ cmd_doctor() {
 		check FAIL "sudo not found"
 	fi
 
-	if [ -x "$prefix/libexec/sudo-dialog-askpass" ]; then
+	if [ -x "$prefix/libexec/sudoorbell-askpass" ]; then
 		check OK "installed: $prefix"
 	else
-		check FAIL "not installed at $prefix (run: sudo-dialog install)"
+		check FAIL "not installed at $prefix (run: sudoorbell install)"
 	fi
 
 	backend=$(sd_backend)
 	case $backend in
-	terminal) check OK "no desktop here: requests wait for you to run 'sudo-dialog approve' in a terminal (inside tmux 3.2+, a popup opens instead)" ;;
+	terminal) check OK "no desktop here: requests wait for you to run 'sudoorbell approve' in a terminal (inside tmux 3.2+, a popup opens instead)" ;;
 	tmux) check OK "no desktop here, inside tmux: requests open as a tmux popup" ;;
 	*) check OK "dialog: $backend" ;;
 	esac
@@ -314,10 +318,10 @@ cmd_doctor() {
 		check OK "display: ${WAYLAND_DISPLAY:-${DISPLAY:-socket}} (sudo uses the dialog by itself here, even without the shell function)"
 	fi
 
-	if [ "${SUDO_ASKPASS:-}" = "$prefix/libexec/sudo-dialog-askpass" ]; then
-		check OK "this shell: SUDO_ASKPASS points at sudo-dialog"
+	if [ "${SUDO_ASKPASS:-}" = "$prefix/libexec/sudoorbell-askpass" ]; then
+		check OK "this shell: SUDO_ASKPASS points at sudoorbell"
 	elif [ -n "${SUDO_ASKPASS:-}" ]; then
-		check WARN "this shell: SUDO_ASKPASS is $SUDO_ASKPASS, not sudo-dialog"
+		check WARN "this shell: SUDO_ASKPASS is $SUDO_ASKPASS, not sudoorbell"
 	else
 		check WARN "this shell: SUDO_ASKPASS is not set (open a new terminal after installing)"
 	fi
@@ -346,17 +350,17 @@ cmd_doctor() {
 				check OK "startup file: $f"
 			fi
 			if without_block "$f" | grep -q 'SUDO_ASKPASS\|sudo()\|function sudo'; then
-				check WARN "$f also sets SUDO_ASKPASS or defines sudo outside the sudo-dialog block; remove that to avoid conflicts"
+				check WARN "$f also sets SUDO_ASKPASS or defines sudo outside the sudoorbell block; remove that to avoid conflicts"
 			fi
 		done
 	done
 
 	claude_json=${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json
-	mode=$( [ -f "$claude_json" ] && jq -r --arg n "$MCP_NAME" '.mcpServers[$n].env.SUDO_DIALOG_MCP_MODE // empty' "$claude_json" 2>/dev/null || true)
+	mode=$( [ -f "$claude_json" ] && jq -r --arg n "$MCP_NAME" '.mcpServers[$n].env.SUDOORBELL_MCP_MODE // empty' "$claude_json" 2>/dev/null || true)
 	case $mode in
 	form) check OK "Claude Code: sudo tool registered; password asked inside Claude Code (visible while typed)" ;;
 	browser) check OK "Claude Code: sudo tool registered; password asked on a local page with a hidden field" ;;
-	*) [ -f "$claude_json" ] && check OK "Claude Code: no sudo tool (optional: sudo-dialog install --claude-mcp)" ;;
+	*) [ -f "$claude_json" ] && check OK "Claude Code: no sudo tool (optional: sudoorbell install --claude-mcp)" ;;
 	esac
 	if [ -f "$claude_settings" ] && ! command -v jq >/dev/null 2>&1; then
 		check WARN "Claude Code: cannot read its settings without jq; the deny rule and sudo tool were not checked"
@@ -374,25 +378,25 @@ cmd_doctor() {
 probe_shell() {
 	label=$1 script=$2
 	shift 2
-	out=$(env -u SUDO_ASKPASS -u SUDO_DIALOG_HOME "$@" "$script" </dev/null 2>/dev/null || true)
+	out=$(env -u SUDO_ASKPASS -u SUDOORBELL_HOME "$@" "$script" </dev/null 2>/dev/null || true)
 	askpass=$(printf '%s\n' "$out" | sed -n 1p)
-	if [ "$askpass" = "$prefix/libexec/sudo-dialog-askpass" ]; then
+	if [ "$askpass" = "$prefix/libexec/sudoorbell-askpass" ]; then
 		if printf '%s\n' "$out" | grep -qx function; then
 			check OK "$label: dialog active"
 		else
 			check WARN "$label: SUDO_ASKPASS set but no sudo function (enough on a Linux desktop, not on macOS)"
 		fi
 	else
-		check WARN "$label: not active (this shell does not read a startup file with the sudo-dialog block)"
+		check WARN "$label: not active (this shell does not read a startup file with the sudoorbell block)"
 	fi
 }
 
 cmd_preview() {
 	backend=$(sd_backend)
 	case $backend in
-	terminal | tmux) die "no desktop here: requests are answered with 'sudo-dialog approve' instead of a dialog" ;;
+	terminal | tmux) die "no desktop here: requests are answered with 'sudoorbell approve' instead of a dialog" ;;
 	esac
-	message=$(sd_message "sudo apt install example-package" "sudo-dialog preview" 1)
+	message=$(sd_message "sudo apt install example-package" "sudoorbell preview" 1)
 	# The preview never keeps what is typed.
 	if sd_show "$message" "$backend" >/dev/null; then
 		say "Allow pressed (input discarded)."
@@ -422,7 +426,7 @@ cmd_approve() {
 			continue
 		fi
 		[ -t 0 ] || die "approve needs a terminal to read the password (or use --deny)"
-		"$src/libexec/sudo-dialog-prompt" "$req" "$fifo" || true
+		"$src/libexec/sudoorbell-prompt" "$req" "$fifo" || true
 	done
 	[ -n "$found" ] || say "No sudo request is waiting."
 }

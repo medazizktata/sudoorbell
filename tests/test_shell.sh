@@ -36,9 +36,9 @@ run() {
 		display_line="unset DISPLAY"
 	fi
 	printf '%s\n' \
-		"export PATH='$bin':\"\$PATH\" SUDO_DIALOG_HOME='$root' SD_STUB_LOG='$SD_STUB_LOG' SD_PAM_DIR='$PAM' SD_OS='$OS'" \
+		"export PATH='$bin':\"\$PATH\" SUDOORBELL_HOME='$root' SD_STUB_LOG='$SD_STUB_LOG' SD_PAM_DIR='$PAM' SD_OS='$OS'" \
 		"$display_line" \
-		"exec $(shell_cmd "$sh_name") -c '. \"\$SUDO_DIALOG_HOME/shell/sudo-dialog.sh\"; sudo $*'" >"$work/scenario"
+		"exec $(shell_cmd "$sh_name") -c '. \"\$SUDOORBELL_HOME/shell/sudoorbell.sh\"; sudo $*'" >"$work/scenario"
 	if [ "$mode" = TTY ]; then
 		with_tty "$work/scenario" >/dev/null 2>&1
 	else
@@ -68,8 +68,8 @@ for sh_name in bash zsh dash sh; do
 	# SC2016: expanded by the shell under test. SC2046: "zsh -f" is two words.
 	# shellcheck disable=SC2016,SC2046
 	assert_eq "$sh_name: SUDO_ASKPASS is exported" \
-		"$(env SUDO_DIALOG_HOME="$root" $(shell_cmd "$sh_name") -c '. "$SUDO_DIALOG_HOME/shell/sudo-dialog.sh"; sh -c "echo \$SUDO_ASKPASS"' </dev/null)" \
-		"$root/libexec/sudo-dialog-askpass"
+		"$(env SUDOORBELL_HOME="$root" $(shell_cmd "$sh_name") -c '. "$SUDOORBELL_HOME/shell/sudoorbell.sh"; sh -c "echo \$SUDO_ASKPASS"' </dev/null)" \
+		"$root/libexec/sudoorbell-askpass"
 done
 
 # Touch ID: macOS skips it when sudo gets -A. So with Touch ID on, no -A, and a
@@ -78,7 +78,7 @@ for sh_name in bash zsh dash sh; do
 	command -v $sh_name >/dev/null 2>&1 || continue
 	OS=macos PAM=$touch_id
 	assert_eq "$sh_name touch id: no -A" "$(run $sh_name NOTTY -k true)" "-k true"
-	assert_eq "$sh_name touch id: DISPLAY set" "$(display_seen)" "sudo-dialog"
+	assert_eq "$sh_name touch id: DISPLAY set" "$(display_seen)" "sudoorbell"
 	DISP=:5
 	run $sh_name NOTTY -k true >/dev/null
 	assert_eq "$sh_name touch id: an existing DISPLAY is kept" "$(display_seen)" ":5"

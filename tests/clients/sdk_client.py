@@ -1,4 +1,4 @@
-"""The sudo-dialog MCP server driven by the official MCP Python SDK client, as
+"""The sudoorbell MCP server driven by the official MCP Python SDK client, as
 a reference implementation of the protocol (not Claude Code). sudo is a stub;
 no real password is used.
 
@@ -16,7 +16,7 @@ from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 
 root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-server = os.path.join(root, "mcp", "sudo-dialog-mcp")
+server = os.path.join(root, "mcp", "sudoorbell-mcp")
 stub = os.path.join(root, "tests", "stubs", "sudo-password-stub")
 passes = fails = 0
 
@@ -56,7 +56,7 @@ async def call(mode, answers, log):
     async def on_message(message):
         notes.append(message)
 
-    env = dict(os.environ, SUDO_DIALOG_MCP_MODE=mode, SUDO_DIALOG_MCP_SUDO=stub, SD_STUB_LOG=log)
+    env = dict(os.environ, SUDOORBELL_MCP_MODE=mode, SUDOORBELL_MCP_SUDO=stub, SD_STUB_LOG=log)
     params = StdioServerParameters(command=server, env=env)
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write, elicitation_callback=on_elicit, message_handler=on_message) as session:
@@ -72,7 +72,7 @@ async def main():
 
     init, tools, result, seen, _ = await call("form", ["correct-horse"], log)
     text = result.content[0].text
-    check("SDK: handshake", init.server_info.name == "sudo-dialog", init.server_info)
+    check("SDK: handshake", init.server_info.name == "sudoorbell", init.server_info)
     check("SDK: the sudo tool is listed", [t.name for t in tools.tools] == ["sudo"])
     check("SDK form: one form, with a password field", len(seen) == 1 and "password" in seen[0].requested_schema["properties"])
     check("SDK form: the command ran", "hello from root" in text and not result.is_error, text)

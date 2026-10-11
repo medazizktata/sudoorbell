@@ -3,7 +3,7 @@
 # Password…"), the dialog does not ask again; when Touch ID cannot be used
 # here, the dialog is the fallback.
 . "$(dirname "$0")/helpers.sh"
-. "$root/lib/sudo-dialog.sh"
+. "$root/lib/sudoorbell.sh"
 
 on=$(scratch)
 printf 'auth       sufficient     pam_tid.so\n' >"$on/sudo_local"
