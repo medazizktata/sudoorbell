@@ -70,6 +70,18 @@ assert_eq "uninstall: deny rule removed, rest kept" \
 	"$(jq -c '.' "$home/.claude/settings.json")" \
 	"$(jq -c '.permissions.deny = []' "$home/settings.orig")"
 
+# The Claude Code sudo tool is registered through the claude command.
+SD_STUB_LOG=$home/claude.log
+export SD_STUB_LOG
+claude_bin=$(stub_bin claude)
+in_home env PATH="$claude_bin:$PATH" "$cli" install --shell zsh --claude-mcp=browser >/dev/null
+calls=$(tr '\n' ' ' <"$SD_STUB_LOG")
+assert_contains "claude-mcp: registered for the user, browser mode" "$calls" "arg: mcp arg: add arg: sudo-dialog arg: --scope arg: user arg: -e arg: SUDO_DIALOG_MCP_MODE=browser arg: -- arg: $prefix/mcp/sudo-dialog-mcp"
+if [ -x "$prefix/mcp/sudo-dialog-mcp" ]; then ok "claude-mcp: server installed"; else not_ok "claude-mcp: server installed"; fi
+: >"$SD_STUB_LOG"
+in_home env PATH="$claude_bin:$PATH" "$cli" uninstall --claude-mcp >/dev/null
+assert_contains "claude-mcp: uninstall removes it" "$(tr '\n' ' ' <"$SD_STUB_LOG")" "arg: mcp arg: remove arg: --scope arg: user arg: sudo-dialog"
+
 err=$(in_home env SUDO_DIALOG_PREFIX="$home/somewhere" "$cli" install 2>&1)
 assert_contains "install: refuses a directory not named sudo-dialog" "$err" "refusing to install"
 

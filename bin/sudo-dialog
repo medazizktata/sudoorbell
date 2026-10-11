@@ -1,14 +1,16 @@
 #!/bin/sh
 # sudo-dialog: set up, check and remove the sudo password dialog.
 #
-#   sudo-dialog install [--shell zsh|bash|fish|all] [--claude-deny]
-#   sudo-dialog uninstall [--claude-deny]
+#   sudo-dialog install [--shell zsh|bash|fish|all] [--claude-deny] [--claude-mcp[=form|browser]]
+#   sudo-dialog uninstall [--claude-deny] [--claude-mcp]
 #   sudo-dialog doctor
 #   sudo-dialog preview
 #   sudo-dialog approve [--deny]
 #
 # approve answers sudo requests waiting for you when there is no desktop to
-# show a dialog on (SSH, servers, containers). Never runs sudo itself.
+# show a dialog on (SSH, servers, containers). --claude-mcp gives Claude Code a
+# sudo tool that asks for the password inside Claude Code (form) or on a local
+# page it opens (browser). Never runs sudo itself.
 
 set -eu
 
@@ -16,6 +18,7 @@ VERSION=0.1.0
 MARK_BEGIN='# >>> sudo-dialog >>>'
 MARK_END='# <<< sudo-dialog <<<'
 CLAUDE_RULE='Bash(sudo:*)'
+MCP_NAME=sudo-dialog
 
 # Where this program really is: the installed command is a symlink in
 # ~/.local/bin, and the library lives next to the real file.
@@ -43,7 +46,7 @@ die() {
 }
 
 usage() {
-	sed -n '2,12s/^# \{0,1\}//p' "$0"
+	sed -n '2,15s/^# \{0,1\}//p' "$0"
 }
 
 # ── shell startup files ──────────────────────────────────────
@@ -150,7 +153,7 @@ claude_edit() {
 # ── commands ─────────────────────────────────────────────────
 
 cmd_install() {
-	shells='' claude=''
+	shells='' claude='' mcp=''
 	while [ $# -gt 0 ]; do
 		case $1 in
 		--shell)
@@ -159,6 +162,8 @@ cmd_install() {
 			shift
 			;;
 		--claude-deny) claude=1 ;;
+		--claude-mcp | --claude-mcp=form) mcp=form ;;
+		--claude-mcp=browser) mcp=browser ;;
 		*) die "unknown option: $1" ;;
 		esac
 		shift
@@ -173,12 +178,12 @@ cmd_install() {
 	# Copy the program, so the repository can move or go away.
 	if [ "$src" != "$prefix" ]; then
 		mkdir -p "$prefix"
-		for d in bin lib libexec shell; do
+		for d in bin lib libexec shell mcp; do
 			rm -rf "${prefix:?}/$d"
 			cp -R "$src/$d" "$prefix/$d"
 		done
 	fi
-	chmod 755 "$prefix/bin/sudo-dialog" "$prefix/libexec/sudo-dialog-askpass" "$prefix/libexec/sudo-dialog-prompt"
+	chmod 755 "$prefix/bin/sudo-dialog" "$prefix/libexec/sudo-dialog-askpass" "$prefix/libexec/sudo-dialog-prompt" "$prefix/mcp/sudo-dialog-mcp"
 	mkdir -p "$bindir"
 	ln -sf "$prefix/bin/sudo-dialog" "$bindir/sudo-dialog"
 	say "Installed to $prefix (command: $bindir/sudo-dialog)"
@@ -213,14 +218,23 @@ cmd_install() {
 		claude_edit '.permissions.deny = (((.permissions.deny // []) - [$r]) + [$r])'
 		say "  Claude Code: added deny rule $CLAUDE_RULE to $claude_settings"
 	fi
+	if [ -n "$mcp" ]; then
+		command -v claude >/dev/null 2>&1 || die "claude not found; cannot register the Claude Code sudo tool"
+		command -v python3 >/dev/null 2>&1 || die "python3 is needed for the Claude Code sudo tool"
+		claude mcp remove --scope user "$MCP_NAME" >/dev/null 2>&1 || true
+		claude mcp add "$MCP_NAME" --scope user -e "SUDO_DIALOG_MCP_MODE=$mcp" -- "$prefix/mcp/sudo-dialog-mcp" >/dev/null
+		say "  Claude Code: sudo tool registered ($mcp mode); the password is asked $(
+			[ "$mcp" = form ] && echo "inside Claude Code, visible while you type" || echo "on a local page with a hidden field")"
+	fi
 	say "Open a new terminal (and restart any AI agent) to pick it up. Check with: sudo-dialog doctor"
 }
 
 cmd_uninstall() {
-	claude=''
+	claude='' mcp=''
 	while [ $# -gt 0 ]; do
 		case $1 in
 		--claude-deny) claude=1 ;;
+		--claude-mcp) mcp=1 ;;
 		*) die "unknown option: $1" ;;
 		esac
 		shift
@@ -253,6 +267,9 @@ cmd_uninstall() {
 		# shellcheck disable=SC2016 # $r is a jq variable
 		claude_edit '.permissions.deny -= [$r]'
 		say "Removed deny rule $CLAUDE_RULE from $claude_settings"
+	fi
+	if [ -n "$mcp" ] && command -v claude >/dev/null 2>&1; then
+		claude mcp remove --scope user "$MCP_NAME" >/dev/null 2>&1 && say "Removed the Claude Code sudo tool"
 	fi
 	say "Open a new terminal for it to take effect."
 }
@@ -324,6 +341,13 @@ cmd_doctor() {
 		done
 	done
 
+	claude_json=${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json
+	mode=$( [ -f "$claude_json" ] && jq -r --arg n "$MCP_NAME" '.mcpServers[$n].env.SUDO_DIALOG_MCP_MODE // empty' "$claude_json" 2>/dev/null || true)
+	case $mode in
+	form) check OK "Claude Code: sudo tool registered; password asked inside Claude Code (visible while typed)" ;;
+	browser) check OK "Claude Code: sudo tool registered; password asked on a local page with a hidden field" ;;
+	*) [ -f "$claude_json" ] && check OK "Claude Code: no sudo tool (optional: sudo-dialog install --claude-mcp)" ;;
+	esac
 	if [ -f "$claude_settings" ]; then
 		if claude_has_rule; then
 			check OK "Claude Code: sudo is denied to the agent ($CLAUDE_RULE); you run it yourself with !sudo"

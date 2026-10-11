@@ -48,6 +48,7 @@ Options:
 |---|---|
 | `--shell zsh,bash,fish` | which shells to set up (default: every one installed) |
 | `--claude-deny` | also stop Claude Code's agent from running `sudo` at all (see below) |
+| `--claude-mcp[=form\|browser]` | give Claude Code a `sudo` tool that asks for the password itself ([Claude Code mode](#claude-code-mode-the-password-asked-inside-claude-code)) |
 
 `install` copies the program to `~/.local/share/sudo-dialog`, links the command
 into `~/.local/bin`, and adds a short, marked block to your shell startup files
@@ -120,6 +121,58 @@ dialog.
 **Codex, Cursor and others.** When the agent runs `sudo`, you get the dialog
 and decide.
 
+## Claude Code mode: the password asked inside Claude Code
+
+Everything above works for any tool. For Claude Code there is also a mode that
+needs no dialog window: a `sudo` tool (an MCP server) whose password prompt
+Claude Code itself shows.
+
+```sh
+sudo-dialog install --claude-mcp --claude-deny           # form inside Claude Code
+sudo-dialog install --claude-mcp=browser --claude-deny   # local page, hidden field
+```
+
+With `--claude-deny` the agent cannot run `sudo` in the shell, so the tool is
+its only way to root, and every call needs your password again (it runs
+`sudo -k`, ignoring any cached session). When Claude wants to run, say,
+`apt-get install curl` as root, it calls the tool and you see:
+
+```
+MCP server "sudo-dialog" requests your input
+Run as root: sudo apt-get install curl
+Reason: install curl for the build
+❯ * Password: Type something…
+  Accept    Decline
+```
+
+The password goes from Claude Code to the tool and on to `sudo -S` through a
+pipe. The tool's result, which is all the model sees, holds the command's
+output and exit code, never the password. A wrong password asks again (up to
+three times); Decline or Esc runs nothing.
+
+Two ways to ask, because Claude Code has no hidden input field yet:
+
+| | `form` (default) | `browser` |
+|---|---|---|
+| where you type | a form inside Claude Code | a page Claude Code opens, on `127.0.0.1` |
+| password on screen while typing | **visible** | hidden (`type=password`) |
+| passes through Claude Code | yes | no |
+| MCP specification | says not to send passwords through forms | the specified way for secrets |
+
+Measured with Claude Code 2.1.287 and 2.1.296 (a fake `sudo`, a dummy
+password): in both modes the password was absent from the session transcript,
+from Claude Code's MCP log (which records the form answer as `[REDACTED]`) and
+from the terminal scrollback once the form closed. In form mode it is plainly
+readable on screen while you type, so mind screen sharing and recording. In
+browser mode the one-time page address appears in Claude Code's MCP log; it
+only lets someone answer that one request while it is open.
+
+Claude Code still asks its usual permission for the tool call, before the
+password form. Allow `mcp__sudo-dialog__sudo` in `/permissions` if you want the
+password form to be the only question.
+
+Needs `python3`. Remove with `sudo-dialog uninstall --claude-mcp`.
+
 ## How it works
 
 `sudo` can get the password from a helper program instead of a terminal: the
@@ -175,7 +228,7 @@ The helper:
 ## Development
 
 ```sh
-sh tests/run.sh              # unit tests: macOS or Linux, no real sudo, no password
+sh tests/run.sh              # unit tests: macOS or Linux, no real sudo, no password (MCP server included)
 sh tests/e2e/linux/run.sh    # end to end in Docker: real sudo; zenity on Xvfb, then no display at all
 ```
 
