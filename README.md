@@ -183,6 +183,26 @@ password form to be the only question.
 
 Needs `python3`. Remove with `sudo-dialog uninstall --claude-mcp`.
 
+### Other MCP clients
+
+The tool is a plain MCP server, so any client that supports elicitation can use
+it. Tested with a stand-in `sudo` and a dummy password:
+
+| Client | Declares at connect | `form` | `browser` |
+|---|---|---|---|
+| MCP Python SDK 2.3.0 (reference client) | – | works | works |
+| Claude Code 2.1.296 | form + url | works, visible while typed | works, hidden field |
+| Codex 0.160.0 | form + url | works, visible while typed; not kept in its session file or logs | declined without showing anything |
+| cursor-agent 2026.09.02 (terminal) | form only | declined without showing a form | refused: no URL support |
+
+Register it in another client the way that client adds stdio MCP servers, with
+the command `~/.local/share/sudo-dialog/mcp/sudo-dialog-mcp` and, for browser
+mode, the environment variable `SUDO_DIALOG_MCP_MODE=browser`. For Codex:
+
+```sh
+codex mcp add sudo-dialog -- ~/.local/share/sudo-dialog/mcp/sudo-dialog-mcp
+```
+
 ## How it works
 
 `sudo` can get the password from a helper program instead of a terminal: the
@@ -241,6 +261,7 @@ The helper:
 sh tests/run.sh              # unit tests: macOS or Linux, no real sudo, no password (MCP server included)
 sh tests/e2e/linux/run.sh    # end to end in Docker: real sudo; zenity on Xvfb, then no display at all
 sh tests/e2e/minimal/run.sh  # bare images: Debian slim, Alpine/BusyBox, sudo-rs, hidepid
+python tests/clients/sdk_client.py  # the MCP server under the official MCP SDK client (pip install mcp)
 ```
 
 The unit tests replace `sudo` and every dialog tool with a stub that records
