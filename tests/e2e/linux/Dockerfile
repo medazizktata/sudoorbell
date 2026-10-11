@@ -3,7 +3,7 @@
 FROM ubuntu:24.04
 RUN apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-		sudo zenity xvfb xdotool procps util-linux jq perl ca-certificates dbus-x11
+		sudo zenity xvfb xdotool tmux procps util-linux jq perl ca-certificates dbus-x11
 RUN useradd -m -s /bin/bash tester \
 	&& echo 'tester:correct-horse' | chpasswd \
 	&& echo 'tester ALL=(ALL) ALL' >/etc/sudoers.d/tester

@@ -17,7 +17,17 @@ MARK_BEGIN='# >>> sudo-dialog >>>'
 MARK_END='# <<< sudo-dialog <<<'
 CLAUDE_RULE='Bash(sudo:*)'
 
-src=$(cd "$(dirname "$0")/.." && pwd -P)
+# Where this program really is: the installed command is a symlink in
+# ~/.local/bin, and the library lives next to the real file.
+self=$0
+while [ -L "$self" ]; do
+	link=$(readlink "$self")
+	case $link in
+	/*) self=$link ;;
+	*) self=$(dirname "$self")/$link ;;
+	esac
+done
+src=$(cd "$(dirname "$self")/.." && pwd -P)
 prefix=${SUDO_DIALOG_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/sudo-dialog}
 bindir=${SUDO_DIALOG_BINDIR:-$HOME/.local/bin}
 claude_settings=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json

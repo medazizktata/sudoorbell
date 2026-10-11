@@ -60,11 +60,53 @@ that rule too).
 ## Requirements
 
 - **macOS:** nothing extra; the dialog is AppleScript.
-- **Linux:** a desktop session (`DISPLAY` or `WAYLAND_DISPLAY` set) and one of
-  `zenity`, `kdialog`, `yad`, or an `ssh-askpass` (`ksshaskpass`,
-  `lxqt-openssh-askpass`, `ssh-askpass-gnome`, `x11-ssh-askpass`). On KDE,
-  `kdialog` is preferred.
+- **Linux desktop:** one of `zenity`, `kdialog`, `yad`, or an `ssh-askpass`
+  (`ksshaskpass`, `lxqt-openssh-askpass`, `ssh-askpass-gnome`,
+  `x11-ssh-askpass`). On KDE, `kdialog` is preferred.
+- **No desktop** (SSH, servers, containers): nothing extra. tmux 3.2 or later
+  gives you a popup; see [Without a desktop](#without-a-desktop).
 - `jq` only for `--claude-deny`.
+
+## Without a desktop
+
+Over SSH, on a server, in a container or in CI there is no screen for a dialog.
+The request waits for you instead:
+
+- **Inside tmux (3.2 or later):** a popup opens on your tmux session, showing
+  the command; type the password there. This is the natural setup for running
+  an agent on a remote machine.
+- **Anywhere else:** the agent's output says a request is waiting, your other
+  terminals get a one-line notice, and you answer from any terminal:
+
+  ```
+  $ sudo-dialog approve
+
+  Run as root:
+
+  sudo -A apt install curl
+
+  Requested by: codex
+
+  Enter your password to allow it.
+
+  Password (leave empty to deny):
+  ```
+
+  `sudo-dialog approve --deny` refuses everything waiting.
+
+The password goes from your terminal to `sudo` through a pipe in a private
+(`0700`) directory; it is never echoed or written to a file. An unanswered
+request gives up after `SUDO_DIALOG_TIMEOUT` seconds. A Mac reached over SSH
+counts as having no desktop.
+
+Two limits:
+
+- Without a display, `sudo` does not call the helper on its own (it only does
+  that when `DISPLAY` or `WAYLAND_DISPLAY` is set), so only commands run
+  through your shell, where the `sudo` function adds `-A`, get this. A program
+  that starts `sudo` directly, not through a shell, still needs `sudo -A`.
+- Some agent sandboxes forbid reading process information (Codex's on macOS).
+  The helper then cannot check that `sudo` called it, and refuses.
 
 ## Using it with agents
 
@@ -115,6 +157,7 @@ The helper:
 | `SUDO_DIALOG_TIMEOUT` | `120` | seconds before an unanswered dialog counts as Deny |
 | `SUDO_DIALOG_BACKEND` | auto | force a dialog tool, e.g. `kdialog` |
 | `SUDO_DIALOG_TITLE` | `Administrator access` | window title |
+| `SUDO_DIALOG_NOTIFY` | `1` | without a desktop, `0` stops the notice to your terminals |
 
 ## Security
 
@@ -133,13 +176,15 @@ The helper:
 
 ```sh
 sh tests/run.sh              # unit tests: macOS or Linux, no real sudo, no password
-sh tests/e2e/linux/run.sh    # end to end in Docker: real sudo, real zenity on Xvfb
+sh tests/e2e/linux/run.sh    # end to end in Docker: real sudo; zenity on Xvfb, then no display at all
 ```
 
 The unit tests replace `sudo` and every dialog tool with a stub that records
 how it was called. The end-to-end test runs the real thing in a container,
 with `xdotool` typing into the dialog: right password, wrong then right, Deny,
 timeout, the bash function, and the failure without sudo-dialog as a baseline.
+A second run has no display: requests answered with `sudo-dialog approve` and
+in a real tmux popup.
 CI runs both, plus `shellcheck`.
 
 ## License

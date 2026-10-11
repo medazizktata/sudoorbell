@@ -47,6 +47,10 @@ if command -v zsh >/dev/null 2>&1; then
 	assert_contains "install: a fresh zsh -c has the function" "$got" "sudo: function"
 fi
 
+# The installed command is a symlink; it must find its library through it.
+assert_eq "installed command: runs through its symlink" "$(in_home "$home/.local/bin/sudo-dialog" version 2>&1)" "$(sh "$cli" version)"
+assert_contains "installed command: approve works through it" "$(in_home "$home/.local/bin/sudo-dialog" approve </dev/null 2>&1)" "No sudo request is waiting."
+
 doctor=$(in_home "$cli" doctor 2>&1)
 assert_contains "doctor: sees the install" "$doctor" "OK   installed: $prefix"
 assert_contains "doctor: sees the deny rule" "$doctor" "sudo is denied to the agent"
