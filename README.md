@@ -144,6 +144,14 @@ given `-A`. With Touch ID on, the function starts `sudo` without `-A` and sets
 display, `sudo` calls the dialog by itself, after Touch ID. That `DISPLAY` may
 reach the command run as root, depending on your sudoers `env_keep`.
 
+Tested on macOS 26.5.1 (MacBook Pro, M3 Pro) from Claude Code's `!`
+commands, through the installed shell function: **Use Password…** ran the
+command, and **Cancel** stopped it with `sudoorbell: not asking: Touch ID was
+cancelled` and no second prompt. A fingerprint worked with the same `sudo`
+call (no `-A`, `DISPLAY` set) made by hand. Measured along the way: with `-A`,
+no Touch ID prompt appears at all. Not tested on real hardware: a Mac where
+Touch ID cannot be used, where the sudoorbell window should take over.
+
 Apple's prompt does not say which command will run; it only says that sudo
 wants to run a command as administrator. The sudoorbell window does. If seeing
 the command matters more to you than the fingerprint, leave Touch ID off.
