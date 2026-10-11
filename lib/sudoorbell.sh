@@ -4,8 +4,23 @@
 # tests. POSIX sh. Nothing here writes to stdout except the dialog backend
 # itself, because stdout is the channel sudo reads the password from.
 
-SD_TITLE=${SUDOORBELL_TITLE:-Administrator access}
-SD_TIMEOUT=${SUDOORBELL_TIMEOUT:-120}
+# Saved settings (`sudoorbell config`): one `key = value` per line in this
+# file. An environment variable (SUDOORBELL_TIMEOUT, ...) still wins.
+sd_config_file() {
+	printf '%s/sudoorbell/config\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
+}
+
+# The saved value of setting $1, or nothing.
+sd_config() {
+	file=$(sd_config_file)
+	[ -r "$file" ] || return 0
+	sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$file" | sed 's/[[:space:]]*$//' | tail -n 1
+}
+
+SD_TITLE=${SUDOORBELL_TITLE:-$(sd_config title)}
+SD_TITLE=${SD_TITLE:-Administrator access}
+SD_TIMEOUT=${SUDOORBELL_TIMEOUT:-$(sd_config timeout)}
+SD_TIMEOUT=${SD_TIMEOUT:-120}
 SD_MAX_COMMAND=300
 # Where sudoorbell-prompt lives; the askpass helper sets it.
 SD_LIBEXEC=${SD_LIBEXEC:-}
@@ -206,15 +221,34 @@ sd_touch_id_on() {
 		"$pam/sudo_local" "$pam/sudo" 2>/dev/null
 }
 
-# Touch ID can be used right now: false on a Mac without a sensor, or with the
-# lid closed and no Touch ID keyboard. Asks macOS; shows nothing.
-sd_touch_id_available() {
+# Touch ID's state on this Mac: available; not-enrolled (no fingerprint
+# added); unavailable (no sensor, or the lid closed with no Touch ID
+# keyboard, or not macOS); locked-out (too many failed tries, until the
+# password is typed once); or unknown. Asks macOS; shows nothing.
+sd_touch_id_state() {
 	if [ -n "${SD_TOUCH_ID:-}" ]; then
-		[ "$SD_TOUCH_ID" = available ]
+		echo "$SD_TOUCH_ID"
 		return
 	fi
-	[ "$(osascript -l JavaScript -e 'ObjC.import("LocalAuthentication");
-		$.LAContext.alloc.init.canEvaluatePolicyError(1, Ref()) ? "yes" : "no"' </dev/null 2>/dev/null)" = yes ]
+	if [ "$(sd_os)" != macos ]; then
+		echo unavailable
+		return
+	fi
+	code=$(osascript -l JavaScript -e 'ObjC.import("LocalAuthentication");
+		const error = Ref();
+		$.LAContext.alloc.init.canEvaluatePolicyError(1, error) ? "ok" : String(error[0] ? error[0].code : "")' </dev/null 2>/dev/null)
+	case $code in
+	ok) echo available ;;
+	-7) echo not-enrolled ;;
+	-6) echo unavailable ;;
+	-8) echo locked-out ;;
+	*) echo unknown ;;
+	esac
+}
+
+# Touch ID can be used right now.
+sd_touch_id_available() {
+	[ "$(sd_touch_id_state)" = available ]
 }
 
 # The sudo command line $1 (e.g. "sudo -k -A true") has -A or --askpass among
@@ -264,12 +298,13 @@ sd_tmux_has_popup() {
 	[ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 2 ]; }
 }
 
-# How to ask. SUDOORBELL_BACKEND overrides the choice. With a desktop: a
+# How to ask. SUDOORBELL_BACKEND, or the `dialog` setting, overrides the choice. With a desktop: a
 # dialog window. Without one: a tmux popup when the request comes from inside
 # tmux, otherwise "terminal", where you answer with `sudoorbell approve`.
 sd_backend() {
-	if [ -n "${SUDOORBELL_BACKEND:-}" ]; then
-		echo "$SUDOORBELL_BACKEND"
+	chosen=${SUDOORBELL_BACKEND:-$(sd_config dialog)}
+	if [ -n "$chosen" ] && [ "$chosen" != auto ]; then
+		echo "$chosen"
 		return
 	fi
 	if sd_has_gui; then
@@ -372,9 +407,9 @@ sd_ask() {
 
 # Tell the user's terminals that a request is waiting: an agent usually shows
 # a command's output only once it finishes, so this may be the only sign.
-# SUDOORBELL_NOTIFY=0 turns it off.
+# SUDOORBELL_NOTIFY=0, or `sudoorbell config notify off`, turns it off.
 sd_notify_ttys() {
-	[ "${SUDOORBELL_NOTIFY:-1}" = 0 ] && return 0
+	case ${SUDOORBELL_NOTIFY:-$(sd_config notify)} in 0 | off) return 0 ;; esac
 	notice=$1
 	uid=$(id -u)
 	for t in /dev/pts/[0-9]* /dev/ttys[0-9]*; do

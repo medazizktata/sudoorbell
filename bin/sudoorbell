@@ -6,11 +6,14 @@
 #   sudoorbell doctor
 #   sudoorbell preview
 #   sudoorbell approve [--deny] [--pending] [--pid N [--stdin]]
+#   sudoorbell config [KEY [VALUE] | --reset KEY]
 #
 # approve answers sudo requests waiting for you when there is no desktop to
-# show a dialog on (SSH, servers, containers). --claude-mcp gives Claude Code a
-# sudo tool that asks for the password inside Claude Code (form) or on a local
-# page it opens (browser). Never runs sudo itself.
+# show a dialog on (SSH, servers, containers). config shows or changes how
+# sudo is gated: Touch ID, the dialog, the Claude Code password field, ...
+# --claude-mcp gives Claude Code a sudo tool that asks for the password inside
+# Claude Code (form) or on a local page it opens (browser). Never runs sudo
+# itself.
 
 set -eu
 
@@ -49,7 +52,7 @@ die() {
 }
 
 usage() {
-	sed -n '2,15s/^# \{0,1\}//p' "$0"
+	sed -n '2,18s/^# \{0,1\}//p' "$0"
 }
 
 # ── shell startup files ──────────────────────────────────────
@@ -158,6 +161,144 @@ claude_edit() {
 	tmp=$(mktemp "$claude_settings.XXXXXX")
 	jq --arg r "$CLAUDE_RULE" "$1" "$claude_settings" >"$tmp"
 	mv -f "$tmp" "$claude_settings"
+}
+
+# ── settings ─────────────────────────────────────────────────
+
+# What decides whether sudo asks Touch ID first on this Mac, one line each:
+# "STATUS<tab>text", STATUS being OK, WARN or INFO.
+touch_id_report() {
+	state=$(sd_touch_id_state)
+	case $state in
+	available) line OK "Touch ID: a fingerprint is set up and the sensor can be used" ;;
+	not-enrolled) line WARN "Touch ID: no fingerprint added (System Settings > Touch ID & Password)" ;;
+	unavailable) line WARN "Touch ID: no sensor can be used now (none on this Mac, or the lid is closed with no Touch ID keyboard)" ;;
+	locked-out) line WARN "Touch ID: locked after failed tries, until your password is typed once" ;;
+	*) line WARN "Touch ID: macOS did not say whether it can be used" ;;
+	esac
+	if sd_touch_id_on; then
+		line OK "Touch ID for sudo: turned on in macOS (pam_tid in /etc/pam.d)"
+	else
+		line WARN "Touch ID for sudo: not turned on in macOS. To turn it on: sed 's/^#auth/auth/' /etc/pam.d/sudo_local.template | sudo tee /etc/pam.d/sudo_local"
+	fi
+	setting=${SUDOORBELL_TOUCH_ID:-$(sd_config touch_id)}
+	if [ "$setting" = off ]; then
+		line INFO "sudoorbell: touch_id is off, so sudo goes straight to the dialog"
+	elif sd_touch_id_on && [ "$state" = available ]; then
+		line OK "sudoorbell: sudo without a terminal asks Touch ID first; the dialog only when Touch ID cannot be used"
+	else
+		line INFO "sudoorbell: Touch ID is not used for now; sudo asks with the dialog"
+	fi
+}
+line() {
+	printf '%s\t%s\n' "$1" "$2"
+}
+
+CONFIG_KEYS='touch_id claude_password dialog timeout notify title'
+
+# config_about KEY: its values, its default and what it does, tab-separated.
+config_about() {
+	case $1 in
+	touch_id) printf 'auto|off\tauto\tTouch ID for sudo: used when macOS has it turned on (auto), or never (off)\n' ;;
+	claude_password) printf 'choose|outside|inside\tchoose\tIn Claude Code, for each sudo command: offer both ways (choose), only Touch ID or the window (outside), or only the hidden field in Claude Code (inside)\n' ;;
+	dialog) printf 'auto|osascript|zenity|kdialog|yad|ksshaskpass|lxqt-openssh-askpass|ssh-askpass-gnome|x11-ssh-askpass|ssh-askpass|tmux|terminal\tauto\tHow the password is asked: picked for the system (auto), a dialog tool, a tmux popup, or a terminal (sudoorbell approve)\n' ;;
+	timeout) printf 'seconds\t120\tSeconds before an unanswered request counts as Deny (5 to 3600)\n' ;;
+	notify) printf 'on|off\ton\tWithout a desktop, tell your other terminals when a request waits\n' ;;
+	title) printf 'text\tAdministrator access\tThe dialog window title\n' ;;
+	*) return 1 ;;
+	esac
+}
+
+# The environment variable that overrides setting $1, if any.
+config_env() {
+	case $1 in
+	touch_id) echo SUDOORBELL_TOUCH_ID ;;
+	dialog) echo SUDOORBELL_BACKEND ;;
+	timeout) echo SUDOORBELL_TIMEOUT ;;
+	notify) echo SUDOORBELL_NOTIFY ;;
+	title) echo SUDOORBELL_TITLE ;;
+	esac
+}
+
+config_valid() {
+	allowed=$(config_about "$1" | cut -f1)
+	case $allowed in
+	seconds)
+		case $2 in '' | *[!0-9]*) return 1 ;; esac
+		[ "$2" -ge 5 ] && [ "$2" -le 3600 ]
+		;;
+	text) [ -n "$2" ] && [ "$(printf '%s' "$2" | wc -l | tr -d ' ')" = 0 ] ;;
+	*) printf '%s\n' "$allowed" | tr '|' '\n' | grep -q -x -F -- "$2" ;;
+	esac
+}
+
+# Saves setting $1 as $2, or removes it when $2 is empty.
+config_write() {
+	file=$(sd_config_file)
+	mkdir -p "$(dirname "$file")"
+	tmp=$file.$$
+	{
+		if [ -f "$file" ]; then
+			grep -v -E "^[[:space:]]*$1[[:space:]]*=" "$file" || true
+		else
+			printf '# sudoorbell settings: change them with "sudoorbell config KEY VALUE"\n'
+		fi
+		[ -z "$2" ] || printf '%s = %s\n' "$1" "$2"
+	} >"$tmp"
+	mv -f "$tmp" "$file"
+}
+
+# Prints setting $1's value and where it comes from.
+config_show() {
+	about=$(config_about "$1")
+	value=$(printf '%s' "$about" | cut -f2) from=default
+	saved=$(sd_config "$1")
+	[ -z "$saved" ] || value=$saved from=saved
+	env=$(config_env "$1")
+	if [ -n "$env" ]; then
+		eval "envvalue=\${$env:-}"
+		# shellcheck disable=SC2154 # set by the eval
+		[ -z "$envvalue" ] || value=$envvalue from="$env in the environment"
+	fi
+	printf '%-16s %-22s (%s)\n' "$1" "$value" "$from"
+}
+
+cmd_config() {
+	case ${1:-} in
+	'')
+		for key in $CONFIG_KEYS; do
+			config_show "$key"
+		done
+		if [ "$(sd_os)" = macos ]; then
+			say ""
+			touch_id_report | while IFS="$(printf '\t')" read -r status text; do
+				printf '  %-4s %s\n' "$status" "$text"
+			done
+		fi
+		say ""
+		say "Saved in $(sd_config_file). Change one with: sudoorbell config KEY VALUE"
+		;;
+	--reset)
+		[ $# -eq 2 ] || die "usage: sudoorbell config --reset KEY"
+		config_about "$2" >/dev/null || die "unknown setting: $2 (one of: $CONFIG_KEYS)"
+		config_write "$2" ''
+		config_show "$2"
+		;;
+	*)
+		config_about "$1" >/dev/null || die "unknown setting: $1 (one of: $CONFIG_KEYS)"
+		if [ $# -eq 1 ]; then
+			config_show "$1"
+			about=$(config_about "$1")
+			say "  $(printf '%s' "$about" | cut -f3)"
+			say "  values: $(printf '%s' "$about" | cut -f1 | sed 's/|/, /g; s/^seconds$/5 to 3600 seconds/; s/^text$/one line of text/'); default: $(printf '%s' "$about" | cut -f2)"
+			return 0
+		fi
+		[ $# -eq 2 ] || die "usage: sudoorbell config KEY VALUE (quote a value with spaces)"
+		config_valid "$1" "$2" || die "not a value for $1: $2 (values: $(config_about "$1" | cut -f1 | sed 's/|/, /g; s/^seconds$/5 to 3600 seconds/; s/^text$/one line of text/'))"
+		config_write "$1" "$2"
+		config_show "$1"
+		;;
+	esac
 }
 
 # ── commands ─────────────────────────────────────────────────
@@ -337,6 +478,11 @@ cmd_doctor() {
 	tmux) check OK "no desktop here, inside tmux: requests open as a tmux popup" ;;
 	*) check OK "dialog: $backend" ;;
 	esac
+	if [ "$os" = macos ]; then
+		touch_id_report | while IFS="$(printf '\t')" read -r status text; do
+			check "$status" "$text"
+		done
+	fi
 	if [ "$os" = linux ] && sd_has_display; then
 		check OK "display: ${WAYLAND_DISPLAY:-${DISPLAY:-socket}} (sudo uses the dialog by itself here, even without the shell function)"
 	fi
@@ -504,6 +650,10 @@ preview) cmd_preview ;;
 approve)
 	shift
 	cmd_approve "$@"
+	;;
+config)
+	shift
+	cmd_config "$@"
 	;;
 version | --version) say "$VERSION" ;;
 help | -h | --help) usage ;;

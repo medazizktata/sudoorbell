@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { eventsIn, question, runsSudo, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
+import { choices, eventsIn, question, runsSudo, settingIn, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
 
 // Stands for Claude Code beneath the mod: answers the question with `answer`
 // (or dismisses it when `answer` is null), runs Bash as a stub, and records
@@ -184,4 +184,32 @@ test('the command is sent to the waiting-request mode, inside a subshell', async
   expect(c.startsWith('(export SUDOORBELL_BACKEND=terminal SUDOORBELL_TOUCH_ID=off SUDOORBELL_NOTIFY=0 ')).toBe(true)
   expect(c).toContain("SUDOORBELL_RUNTIME_DIR='/tmp/it'\\''s'")
   expect(c.endsWith('sudo id -u # a comment\n)')).toBe(true)
+})
+
+test('the claude_password setting picks the answers offered', async () => {
+  expect(choices('', true)).toEqual(['Approve', 'Type password here', 'Deny'])
+  expect(choices('choose', true)).toEqual(['Approve', 'Type password here', 'Deny'])
+  expect(choices('outside', true)).toEqual(['Approve', 'Deny'])
+  expect(choices('inside', true)).toEqual(['Type password here', 'Deny'])
+  // The field is never offered while another mod could read it, whatever the setting.
+  expect(choices('inside', false)).toEqual(['Approve', 'Deny'])
+  expect(settingIn('# x\nclaude_password = inside\ntimeout=9\nclaude_password=outside  \n', 'claude_password')).toBe('outside')
+  expect(settingIn('timeout = 9\n', 'claude_password')).toBe('')
+})
+
+test('with claude_password inside, Approve is not an answer', async ($, on) => {
+  on('env.get', ($, e) => ({ value: e.name === 'HOME' ? '/home/me' : undefined }))
+  on('fs.read', ($, e) => (e.path === '/home/me/.config/sudoorbell/config' ? { value: 'claude_password = inside\n' } : { deny: 'missing' }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '[]', stderr: '' } }))
+  const offered: string[][] = []
+  on('tool.call', ($, e) => {
+    if (e.tool === 'AskUserQuestion') {
+      offered.push(e.questions[0].options.map(o => (typeof o === 'string' ? o : o.label)))
+      return { result: { answers: { [e.questions[0].question]: 'Approve' } } }
+    }
+    throw new Error('the command must not run')
+  })
+  const out = await $.tool.call({ tool: 'Bash', command: 'sudo id -u' })
+  expect(offered[0]).toEqual(['Type password here', 'Deny'])
+  expect(out.deny).toContain('did not approve')
 })

@@ -193,17 +193,46 @@ it.
 │
 │ sudo id -u
 │
-│ Touch ID or your password confirms it next, outside Claude Code. Allow it?
+│ Approve: Touch ID or your password confirms it next, outside Claude Code. Allow it?
 ❯ 1. Approve
-  2. Deny
+  2. Type password here
+  3. Deny
 ```
 
 - **Approve**: the command runs through Claude Code's own Bash tool, past the
   deny rule for that one call, and sudoorbell then asks for Touch ID or your
-  password as usual. The password never passes through Claude Code.
+  password in its window. The password never passes through Claude Code.
+- **Type password here**: a pane opens in Claude Code with a password field.
+  Typing shows nothing, as in a terminal (Backspace works, Clear starts over),
+  and Enter hands the password to that one sudo request, through the standard
+  input of `sudoorbell approve --pid N --stdin`. A wrong password opens the
+  pane again, up to sudo's three tries.
 - **Deny**, Esc, or no one to ask (`claude -p`): the command doesn't run, and
-  Claude is told not to retry it. Anything typed into the dialog's free-text
+  Claude is told not to retry it. Anything typed into the question's free-text
   row also refuses, and is never shown to Claude, in case it was a password.
+
+`sudoorbell config claude_password outside` offers only Approve and Deny;
+`inside` offers only the field and Deny.
+
+Typing a password inside Claude Code has risks that Touch ID and the window
+don't, so the field comes with these guards:
+
+- **Other mods.** Any mod can subscribe to what is typed into another mod's
+  field (`ui.input`), and to the processes a mod starts with their input
+  (`process.run`). The field is only offered while no other enabled mod hooks
+  either, or `prompt.edit`, or a pattern covering them such as `*`. The plugin
+  reads every enabled plugin's hooks module, as Claude Code does, and watches
+  each mod that loads later. Mods built into Claude Code are trusted. When the
+  field is off, the question says which mod is the reason.
+- **Mods after this one.** The plugin's own `ui.input` hook takes each
+  keystroke and passes nothing on.
+- **The wrong place.** While a request waits, anything typed into Claude's own
+  prompt is thrown away: it never shows, is never queued, and never reaches
+  Claude. (In testing, before this guard, a password typed while the prompt
+  had the keyboard was sent to Claude as a message.) The pane also takes the
+  keyboard again for every attempt.
+- **Records.** Tested by searching for the test passwords afterwards: neither
+  was in the session's transcript nor in its debug log (`claude --debug`).
 
 Every `sudo` the plugin did not approve still meets the deny rule, and so does
 every `sudo` when the plugin isn't loaded. The plugin also recognises
@@ -218,16 +247,26 @@ integration it relies on:
 
 Needs Claude Code 2.1.287 or later (plugins with code, called mods). The
 plugin lifts only the `Bash(sudo:*)` rule: a deny from any other rule still
-stands. On a Team or Enterprise plan, or a machine with managed settings, deny
-rules hold over plugins by default, so there the rule wins and approved
-commands are still refused.
+stands, even in the same command line (`sudo make install && curl ...` with
+curl denied stays refused). On a Team or Enterprise plan, or a machine with
+managed settings, deny rules hold over plugins by default, so there the rule
+wins and approved commands are still refused.
 
-Tested in a real Claude Code 2.1.296 session, with the `Bash(sudo:*)` deny
-rule in force, auto mode on, and a stand-in `sudo` that runs nothing as root:
-Deny kept the command from running; Approve ran it through the shell
-function's Touch ID path; and with the plugin's override switched off, the
-same Approve was refused by the deny rule. Not yet tested: a real Touch ID
-prompt after Approve.
+Tested in real Claude Code 2.1.296 sessions with the `Bash(sudo:*)` deny rule
+in force and auto mode on:
+
+- With a stand-in `sudo` that runs nothing as root: Approve, Deny, Esc, a typed
+  answer, `sudo` by full path, `claude -p`, and another deny rule in the same
+  command all behave as above; with the override switched off, the deny rule
+  refuses an approved call.
+- With a stand-in that asks through the same request mode as the real helper:
+  a wrong and then a right password typed in the pane reach sudo whole, the
+  second as attempt 2, and neither shows on screen.
+- With real sudo: Approve, then Apple's prompt, ran the command.
+
+Not yet tested: the field with real sudo, the prompt guard catching typing
+(the keyboard stayed in the field in every run), and a subagent's sudo (auto
+mode blocked the subagent from starting).
 
 ## Claude Code mode: the password asked inside Claude Code
 
@@ -333,12 +372,25 @@ The helper:
 
 ### Settings
 
-| Variable | Default | |
-|---|---|---|
-| `SUDOORBELL_TIMEOUT` | `120` | seconds before an unanswered dialog counts as Deny |
-| `SUDOORBELL_BACKEND` | auto | force a dialog tool, e.g. `kdialog` |
-| `SUDOORBELL_TITLE` | `Administrator access` | window title |
-| `SUDOORBELL_NOTIFY` | `1` | without a desktop, `0` stops the notice to your terminals |
+`sudoorbell config` lists the settings, `sudoorbell config KEY VALUE`
+changes one, and `sudoorbell config --reset KEY` puts it back. They are saved
+in `~/.config/sudoorbell/config`. An environment variable, where there is one,
+still wins for the commands it is set for.
+
+| Setting | Values | Default | Environment |
+|---|---|---|---|
+| `touch_id` | `auto`, `off` | `auto` | `SUDOORBELL_TOUCH_ID` |
+| `claude_password` | `choose`, `outside`, `inside` | `choose` | |
+| `dialog` | `auto`, a dialog tool (`osascript`, `zenity`, `kdialog`, `yad`, an `ssh-askpass`), `tmux`, `terminal` | `auto` | `SUDOORBELL_BACKEND` |
+| `timeout` | 5 to 3600 seconds | `120` | `SUDOORBELL_TIMEOUT` |
+| `notify` | `on`, `off` | `on` | `SUDOORBELL_NOTIFY` (`0` is off) |
+| `title` | one line of text | `Administrator access` | `SUDOORBELL_TITLE` |
+
+On a Mac, `sudoorbell config` and `sudoorbell doctor` also say whether Touch
+ID will be used, and if not, why: no fingerprint added, no sensor usable (none
+on this Mac, or the lid closed with no Touch ID keyboard), locked after failed
+tries, not turned on for sudo in macOS (with the command that turns it on), or
+`touch_id` set to `off`.
 
 ## Security
 

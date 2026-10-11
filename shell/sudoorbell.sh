@@ -23,10 +23,13 @@ if [ -n "${SUDOORBELL_HOME:-}" ] && [ -x "$SUDOORBELL_HOME/libexec/sudoorbell-as
 	# Touch ID (or Apple Watch) turned on for sudo, in /etc/pam.d/sudo_local
 	# or /etc/pam.d/sudo. Checked on every call: it can be turned on later.
 	# SUDOORBELL_TOUCH_ID=off skips it for a command, as the Claude Code
-	# plugin does when you choose to type the password there.
+	# plugin does when you choose to type the password there, and
+	# `sudoorbell config touch_id off` skips it always.
 	_sudoorbell_touch_id() {
 		[ -n "$_sd_macos" ] || return 1
-		[ "${SUDOORBELL_TOUCH_ID:-}" != off ] || return 1
+		_sd_touch=${SUDOORBELL_TOUCH_ID:-$(sed -n 's/^[[:space:]]*touch_id[[:space:]]*=[[:space:]]*//p' \
+			"${XDG_CONFIG_HOME:-$HOME/.config}/sudoorbell/config" 2>/dev/null | sed 's/[[:space:]]*$//' | tail -n 1)}
+		[ "$_sd_touch" != off ] || return 1
 		_sd_pam=${SD_PAM_DIR:-/etc/pam.d}
 		grep -q -E '^[[:space:]]*auth[[:space:]].*pam_(tid|watchid)\.so' \
 			"$_sd_pam/sudo_local" "$_sd_pam/sudo" 2>/dev/null

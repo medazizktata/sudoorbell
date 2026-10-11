@@ -78,16 +78,17 @@ export const register: Register = on => {
       isScanned = true
     }
     const canType = watchers.size === 0 && request === null
+    const options = choices(await setting($, 'claude_password'), canType)
     let answer = DENY
     try {
       answer = await $.ui.ask(question(command, e.agentId !== undefined, canType ? null : [...watchers]), {
-        options: canType ? [APPROVE, TYPE_HERE, DENY] : [APPROVE, DENY],
+        options,
         header: 'sudo',
       })
     } catch {
       // Dismissed, "Chat about this", or nobody to ask (claude -p): refuse.
     }
-    if (answer !== APPROVE && !(canType && answer === TYPE_HERE)) {
+    if (answer === DENY || !options.includes(answer)) {
       // Never repeat a typed answer: it could be a password typed in the wrong place.
       return { deny: REFUSED }
     }
@@ -313,6 +314,16 @@ async function refuse($, pid) {
   await $.process.run([bin, 'approve', '--pid', pid, '--deny'], { env: { SUDOORBELL_RUNTIME_DIR: runtime }, timeoutMs: 10000 })
 }
 
+// A saved setting (`sudoorbell config`), or '' when it is not set.
+async function setting($, key) {
+  try {
+    const base = (await $.env.get('XDG_CONFIG_HOME')) || ((await $.env.get('HOME')) ?? '') + '/.config'
+    return settingIn(await $.fs.read(base + '/sudoorbell/config'), key)
+  } catch {
+    return ''
+  }
+}
+
 // Where sudoorbell is: its own install, or Homebrew's.
 async function findSudoorbell($) {
   const home = (await $.env.get('HOME')) ?? ''
@@ -375,6 +386,33 @@ async function scanPlugins($) {
 /** The event names a hooks module's source registers with `on('...')`. */
 export function eventsIn(source: string): string[] {
   return [...source.matchAll(/\bon\(\s*['"`]([^'"`]+)['"`]/g)].map(m => m[1])
+}
+
+/** The value of `key` in a sudoorbell config file's text: its last `key = value` line. */
+export function settingIn(text: string, key: string): string {
+  let value = ''
+  for (const line of text.split('\n')) {
+    const m = line.match(/^\s*([a-z_]+)\s*=\s*(.*?)\s*$/)
+    if (m !== null && m[1] === key) {
+      value = m[2]
+    }
+  }
+  return value
+}
+
+/**
+ * The answers offered, by the `claude_password` setting: `outside` never
+ * offers the field, `inside` offers only the field, and `choose` (the
+ * default) offers both. The field only while no other mod could read it.
+ */
+export function choices(claudePassword: string, canType: boolean): string[] {
+  if (canType && claudePassword === 'inside') {
+    return [TYPE_HERE, DENY]
+  }
+  if (canType && claudePassword !== 'outside') {
+    return [APPROVE, TYPE_HERE, DENY]
+  }
+  return [APPROVE, DENY]
 }
 
 /** Does any of these event patterns cover an event a password could be read from? */
