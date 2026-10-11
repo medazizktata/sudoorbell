@@ -196,6 +196,63 @@ sd_has_gui() {
 	esac
 }
 
+# Touch ID (or Apple Watch) is turned on for sudo, in /etc/pam.d/sudo_local or
+# /etc/pam.d/sudo.
+sd_touch_id_on() {
+	pam=${SD_PAM_DIR:-/etc/pam.d}
+	grep -q -E '^[[:space:]]*auth[[:space:]].*pam_(tid|watchid)\.so' \
+		"$pam/sudo_local" "$pam/sudo" 2>/dev/null
+}
+
+# Touch ID can be used right now: false on a Mac without a sensor, or with the
+# lid closed and no Touch ID keyboard. Asks macOS; shows nothing.
+sd_touch_id_available() {
+	if [ -n "${SD_TOUCH_ID:-}" ]; then
+		[ "$SD_TOUCH_ID" = available ]
+		return
+	fi
+	[ "$(osascript -l JavaScript -e 'ObjC.import("LocalAuthentication");
+		$.LAContext.alloc.init.canEvaluatePolicyError(1, Ref()) ? "yes" : "no"' </dev/null 2>/dev/null)" = yes ]
+}
+
+# The sudo command line $1 (e.g. "sudo -k -A true") has -A or --askpass among
+# sudo's own options. macOS then skips Touch ID and goes straight to the
+# askpass program.
+sd_sudo_has_askpass_flag() (
+	# Split the command line into words, without expanding * and the like.
+	set -f
+	# shellcheck disable=SC2086
+	set -- $1
+	shift
+	skip=
+	for a in "$@"; do
+		if [ -n "$skip" ]; then
+			skip=
+			continue
+		fi
+		case $a in
+		--askpass) return 0 ;;
+		--) return 1 ;;
+		--*) ;;
+		-*A*) return 0 ;;
+		-[ugpCDRTUrth]) skip=1 ;;
+		-*) ;;
+		*) return 1 ;;
+		esac
+	done
+	return 1
+)
+
+# sudo already offered Touch ID before asking us: Touch ID is on for sudo and
+# usable here, and sudo was not started with -A. Its prompt has its own "Use
+# Password…", so being asked now means you pressed Cancel there.
+sd_touch_id_was_offered() {
+	[ "$(sd_os)" = macos ] && sd_has_gui || return 1
+	sd_touch_id_on || return 1
+	sd_sudo_has_askpass_flag "$(sd_proc args "$1")" && return 1
+	sd_touch_id_available
+}
+
 # tmux 3.2 added display-popup.
 sd_tmux_has_popup() {
 	version=$(tmux -V 2>/dev/null | sed 's/^tmux //; s/^next-//; s/[^0-9.].*//')

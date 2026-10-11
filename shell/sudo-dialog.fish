@@ -37,6 +37,15 @@ if set -q SUDO_DIALOG_HOME; and test -x "$SUDO_DIALOG_HOME/libexec/sudo-dialog-a
                     break
             end
         end
+        # macOS skips Touch ID when sudo is given -A. So with Touch ID on,
+        # start sudo without -A and with DISPLAY set: with no terminal and a
+        # display, sudo uses SUDO_ASKPASS by itself, after Touch ID.
+        if test (uname -s) = Darwin
+            and grep -q -E '^[[:space:]]*auth[[:space:]].*pam_(tid|watchid)\.so' /etc/pam.d/sudo_local /etc/pam.d/sudo 2>/dev/null
+            set -q DISPLAY; or set -lx DISPLAY sudo-dialog
+            command sudo $argv
+            return
+        end
         command sudo -A $argv
     end
 end

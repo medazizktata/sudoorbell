@@ -119,6 +119,33 @@ Two limits:
 - Some agent sandboxes forbid reading process information (Codex's on macOS).
   The helper then cannot check that `sudo` called it, and refuses.
 
+## Touch ID on macOS
+
+macOS can let sudo accept Touch ID. Turn it on with:
+
+```
+sed 's/^#auth/auth/' /etc/pam.d/sudo_local.template | sudo tee /etc/pam.d/sudo_local
+```
+
+(`sudo_local` survives macOS updates.) With it on, a `sudo` without a terminal
+shows Apple's Touch ID prompt first, also for agents and Claude Code's `!`
+commands. That prompt has its own **Use Password…**, so:
+
+- **Touch ID** or **Use Password…** in Apple's prompt: sudo runs.
+- **Cancel** in Apple's prompt: sudo does not run. No second prompt follows.
+- **Touch ID cannot be used** (a Mac without a sensor, the lid closed with no
+  Touch ID keyboard): the sudo-dialog window asks for the password instead.
+
+Why the shell function changes for this: macOS skips Touch ID when `sudo` is
+given `-A`. With Touch ID on, the function starts `sudo` without `-A` and sets
+`DISPLAY` (to `sudo-dialog`, if it was not set); with no terminal and a
+display, `sudo` calls the dialog by itself, after Touch ID. That `DISPLAY` may
+reach the command run as root, depending on your sudoers `env_keep`.
+
+Apple's prompt does not say which command will run; it only says that sudo
+wants to run a command as administrator. The sudo-dialog window does. If seeing
+the command matters more to you than the fingerprint, leave Touch ID off.
+
 ## Using it with agents
 
 **Claude Code.** Run `sudo` yourself with the `!` prefix: `! sudo apt install curl`.

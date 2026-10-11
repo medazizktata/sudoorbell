@@ -33,6 +33,13 @@ if ! sd_parent_is_sudo "$sudo_pid"; then
 	exit 1
 fi
 
+# Touch ID's own prompt already offered a password ("Use Password…"). Asking
+# again would turn its Cancel into a second prompt instead of a no.
+if sd_touch_id_was_offered "$sudo_pid"; then
+	sd_err "not asking: Touch ID was cancelled"
+	exit 1
+fi
+
 command=$(sd_command_of "$sudo_pid")
 requester=$(sd_requester "$sudo_pid")
 attempt=$(sd_attempt "$sudo_pid")

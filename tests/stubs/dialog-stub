@@ -5,6 +5,7 @@
 {
 	printf 'called: %s\n' "${0##*/}"
 	for a in "$@"; do printf 'arg: %s\n' "$a"; done
+	printf 'display: %s\n' "${DISPLAY-(unset)}"
 	if [ "${0##*/}" = osascript ]; then
 		printf 'stdin:\n'
 		cat
