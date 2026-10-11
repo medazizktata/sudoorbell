@@ -83,7 +83,8 @@ def session(answers, arguments, capabilities=None, mode="form", browser=(), brow
         m = recv()
         if m.get("method") == "elicitation/create":
             forms.append(m["params"])
-            answer = answers.pop(0)
+            # A form nobody expected is declined, so the checks below report it.
+            answer = answers.pop(0) if answers else {"action": "decline"}
             send({"jsonrpc": "2.0", "id": m["id"], "result": answer})
             if m["params"].get("mode") == "url" and answer.get("action") == "accept" and browser:
                 user = threading.Thread(target=browse, args=(m["params"]["url"], browser, last_pages, browser_host))
