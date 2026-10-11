@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""sudo-dialog-mcp: run commands as root from Claude Code, with the password
+asked for inside Claude Code itself.
+
+An MCP server (stdio) with one tool, `sudo`. When the agent calls it, the
+server asks Claude Code to show a form (MCP elicitation) naming the command;
+you type your password there. The password goes from the form to this
+server and on to `sudo -S` through a pipe. It is never in the tool's result,
+so the model never sees it.
+
+Every call needs the password again (`sudo -k`), so the agent cannot ride on
+a cached sudo session.
+
+Standard library only. Environment:
+  SUDO_DIALOG_MCP_SUDO     sudo binary to run (default: sudo; tests use a stub)
+  SUDO_DIALOG_MCP_TIMEOUT  seconds a command may run (default: 600)
+"""
+
+import json
+import os
+import shlex
+import subprocess
+import sys
+
+PROTOCOL_VERSION = "2025-06-18"
+VERSION = "0.1.0"
+MAX_ATTEMPTS = 3
+MAX_OUTPUT = 100_000
+SUDO = os.environ.get("SUDO_DIALOG_MCP_SUDO", "sudo")
+TIMEOUT = int(os.environ.get("SUDO_DIALOG_MCP_TIMEOUT", "600"))
+
+TOOL = {
+    "name": "sudo",
+    "description": (
+        "Run one command as root. The user is shown the command in a form inside "
+        "Claude Code and types their password there; it goes to sudo and is never "
+        "returned to you. Use this instead of running sudo in the shell. Give the "
+        "command as an argument list (no shell), and say why it needs root."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "description": 'The program and its arguments, e.g. ["apt-get", "install", "-y", "curl"].',
+            },
+            "reason": {
+                "type": "string",
+                "description": "One sentence for the user: why this needs root.",
+            },
+        },
+        "required": ["command", "reason"],
+    },
+}
+
+
+class Peer:
+    """JSON-RPC over stdio: one JSON message per line."""
+
+    def __init__(self):
+        self.next_id = 0
+        self.pending = []  # messages read while waiting for a response
+
+    def send(self, message):
+        sys.stdout.write(json.dumps(message) + "\n")
+        sys.stdout.flush()
+
+    def read(self):
+        if self.pending:
+            return self.pending.pop(0)
+        line = sys.stdin.readline()
+        if not line:
+            return None
+        return json.loads(line)
+
+    def request(self, method, params):
+        """Send a request to the client and wait for its response."""
+        self.next_id += 1
+        request_id = f"sudo-dialog-{self.next_id}"
+        self.send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+        while True:
+            line = sys.stdin.readline()
+            if not line:
+                raise EOFError("client went away")
+            message = json.loads(line)
+            if message.get("id") == request_id and "method" not in message:
+                if "error" in message:
+                    raise RuntimeError(message["error"].get("message", "elicitation failed"))
+                return message.get("result", {})
+            # Anything else (a cancellation, a ping) is handled after this call.
+            self.pending.append(message)
+
+
+def text_result(text, is_error=False):
+    return {"content": [{"type": "text", "text": text}], "isError": is_error}
+
+
+def clip(data):
+    text = data.decode("utf-8", "replace")
+    if len(text) > MAX_OUTPUT:
+        return text[:MAX_OUTPUT] + f"\n[... {len(text) - MAX_OUTPUT} more characters cut]"
+    return text
+
+
+def ask_password(peer, command_line, reason, attempt):
+    message = f"Run as root:\n\n  {command_line}\n\nReason: {reason}\n"
+    if attempt > 1:
+        message += f"\nWrong password. Attempt {attempt} of {MAX_ATTEMPTS}.\n"
+    message += "\nEnter your password to allow it, or decline."
+    result = peer.request(
+        "elicitation/create",
+        {
+            "message": message,
+            "requestedSchema": {
+                "type": "object",
+                "properties": {
+                    "password": {
+                        "type": "string",
+                        "title": "Password",
+                        "description": "Your login password, for sudo",
+                    }
+                },
+                "required": ["password"],
+            },
+        },
+    )
+    if result.get("action") != "accept":
+        return None
+    return (result.get("content") or {}).get("password") or None
+
+
+def run_sudo(peer, args):
+    command = args.get("command")
+    reason = (args.get("reason") or "").strip() or "(no reason given)"
+    if not isinstance(command, list) or not command or not all(isinstance(a, str) for a in command):
+        return text_result("`command` must be a non-empty list of strings.", True)
+    command_line = "sudo " + shlex.join(command)
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            password = ask_password(peer, command_line, reason, attempt)
+        except (RuntimeError, EOFError) as e:
+            return text_result(f"Could not ask the user for the password: {e}", True)
+        if password is None:
+            return text_result("The user declined; the command was not run.", True)
+        try:
+            # -S: password from stdin. -k: ignore any cached sudo session, so
+            # every call needs the user. -p '': no prompt text in the output.
+            done = subprocess.run(
+                [SUDO, "-S", "-k", "-p", "", "--", *command],
+                input=(password + "\n").encode(),
+                capture_output=True,
+                timeout=TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            return text_result(f"{command_line} did not finish within {TIMEOUT}s and was stopped.", True)
+        finally:
+            password = None
+        stderr = clip(done.stderr)
+        if done.returncode != 0 and "incorrect password attempt" in stderr:
+            continue
+        stdout = clip(done.stdout)
+        body = f"$ {command_line}\nexit code: {done.returncode}\n"
+        if stdout:
+            body += f"\nstdout:\n{stdout}"
+        if stderr:
+            body += f"\nstderr:\n{stderr}"
+        return text_result(body, done.returncode != 0)
+    return text_result(f"Wrong password {MAX_ATTEMPTS} times; the command was not run.", True)
+
+
+def main():
+    peer = Peer()
+    client_can_elicit = False
+    while True:
+        message = peer.read()
+        if message is None:
+            return
+        method = message.get("method")
+        request_id = message.get("id")
+        if method == "initialize":
+            capabilities = (message.get("params") or {}).get("capabilities") or {}
+            client_can_elicit = "elicitation" in capabilities
+            peer.send({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "sudo-dialog", "version": VERSION},
+                },
+            })
+        elif method == "tools/list":
+            peer.send({"jsonrpc": "2.0", "id": request_id, "result": {"tools": [TOOL]}})
+        elif method == "tools/call":
+            params = message.get("params") or {}
+            if params.get("name") != "sudo":
+                result = text_result(f"Unknown tool: {params.get('name')}", True)
+            elif not client_can_elicit:
+                result = text_result("This client cannot show a password form (no MCP elicitation support).", True)
+            else:
+                result = run_sudo(peer, params.get("arguments") or {})
+            peer.send({"jsonrpc": "2.0", "id": request_id, "result": result})
+        elif method == "ping":
+            peer.send({"jsonrpc": "2.0", "id": request_id, "result": {}})
+        elif request_id is not None:
+            peer.send({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": f"Method not found: {method}"}})
+        # Notifications (no id) need no answer.
+
+
+if __name__ == "__main__":
+    main()
