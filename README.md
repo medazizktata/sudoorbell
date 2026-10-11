@@ -35,6 +35,15 @@ the agent, its logs or the conversation.
 
 ## Install
 
+With Homebrew (macOS or Linux):
+
+```sh
+brew install medazizktata/tap/sudoorbell
+sudoorbell install
+```
+
+Or from a clone:
+
 ```sh
 git clone https://github.com/medazizktata/sudoorbell
 cd sudoorbell
@@ -55,10 +64,13 @@ Options:
 `install` copies the program to `~/.local/share/sudoorbell`, links the command
 into `~/.local/bin`, and adds a short, marked block to your shell startup files
 (`~/.zshenv`, `~/.bashrc`, `~/.bash_profile`, fish `conf.d`). Each file is backed
-up once to `<file>.sudoorbell.bak`.
+up once to `<file>.sudoorbell.bak`. Installed with Homebrew, it uses Homebrew's
+copy in place instead, through its stable `opt/` path, so upgrades need no
+reinstall.
 
 Remove everything with `sudoorbell uninstall` (add `--claude-deny` to remove
-that rule too).
+that rule too). With Homebrew, `brew uninstall sudoorbell` then removes the
+program itself.
 
 ## Requirements
 
