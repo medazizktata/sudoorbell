@@ -1,0 +1,14 @@
+{
+  "name": "sudoorbell",
+  "description": "sudoorbell's Claude Code plugin",
+  "owner": {
+    "name": "Mohamed Aziz Ktata"
+  },
+  "plugins": [
+    {
+      "name": "sudoorbell",
+      "source": "./claude-code",
+      "description": "Asks you before Claude runs a sudo command, naming the command; Touch ID or your password then confirms it outside Claude Code."
+    }
+  ]
+}

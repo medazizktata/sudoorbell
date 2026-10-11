@@ -1,0 +1,10 @@
+{
+  "name": "sudoorbell",
+  "version": "0.2.0",
+  "description": "Asks you before Claude runs a sudo command, naming the command; Touch ID or your password then confirms it outside Claude Code.",
+  "author": { "name": "Mohamed Aziz Ktata" },
+  "homepage": "https://github.com/medazizktata/sudoorbell",
+  "repository": "https://github.com/medazizktata/sudoorbell",
+  "license": "MIT",
+  "keywords": ["sudo", "security", "touch-id", "mods"]
+}

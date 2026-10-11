@@ -1,0 +1,4 @@
+{
+  "description": "sudoorbell: holds each Bash command that uses sudo until you approve it, then lets it past the Bash(sudo:*) deny rule for that one call.",
+  "modules": ["./sudoorbell.ts"]
+}

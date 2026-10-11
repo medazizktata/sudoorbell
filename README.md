@@ -180,6 +180,55 @@ dialog.
 **Codex, Cursor and others.** When the agent runs `sudo`, you get the dialog
 and decide.
 
+## The Claude Code plugin: approve each sudo command
+
+With `--claude-deny` alone, Claude can never run `sudo`. The plugin keeps that
+rule and adds a way through it, one command at a time: when Claude runs a Bash
+command that uses `sudo`, the command waits and Claude Code asks you, showing
+it.
+
+```
+ ☐ sudo
+│ Claude wants to run this with sudo:
+│
+│ sudo id -u
+│
+│ Touch ID or your password confirms it next, outside Claude Code. Allow it?
+❯ 1. Approve
+  2. Deny
+```
+
+- **Approve**: the command runs through Claude Code's own Bash tool, past the
+  deny rule for that one call, and sudoorbell then asks for Touch ID or your
+  password as usual. The password never passes through Claude Code.
+- **Deny**, Esc, or no one to ask (`claude -p`): the command doesn't run, and
+  Claude is told not to retry it. Anything typed into the dialog's free-text
+  row also refuses, and is never shown to Claude, in case it was a password.
+
+Every `sudo` the plugin did not approve still meets the deny rule, and so does
+every `sudo` when the plugin isn't loaded. The plugin also recognises
+`/usr/bin/sudo` and `sudo` inside `$( )`, `( )` and pipelines.
+
+Install it after `sudoorbell install --claude-deny`, which sets up the shell
+integration it relies on:
+
+```
+/plugin install sudoorbell --marketplace medazizktata/sudoorbell
+```
+
+Needs Claude Code 2.1.287 or later (plugins with code, called mods). The
+plugin lifts only the `Bash(sudo:*)` rule: a deny from any other rule still
+stands. On a Team or Enterprise plan, or a machine with managed settings, deny
+rules hold over plugins by default, so there the rule wins and approved
+commands are still refused.
+
+Tested in a real Claude Code 2.1.296 session, with the `Bash(sudo:*)` deny
+rule in force, auto mode on, and a stand-in `sudo` that runs nothing as root:
+Deny kept the command from running; Approve ran it through the shell
+function's Touch ID path; and with the plugin's override switched off, the
+same Approve was refused by the deny rule. Not yet tested: a real Touch ID
+prompt after Approve.
+
 ## Claude Code mode: the password asked inside Claude Code
 
 Everything above works for any tool. For Claude Code there is also a mode that
@@ -311,6 +360,8 @@ sh tests/run.sh              # unit tests: macOS or Linux, no real sudo, no pass
 sh tests/e2e/linux/run.sh    # end to end in Docker: real sudo; zenity on Xvfb, then no display at all
 sh tests/e2e/minimal/run.sh  # bare images: Debian slim, Alpine/BusyBox, sudo-rs, hidepid
 python tests/clients/sdk_client.py  # the MCP server under the official MCP SDK client (pip install mcp)
+claude plugin test claude-code      # the Claude Code plugin: no session, no sign-in
+claude plugin validate .            # the plugin and its marketplace, as Claude Code reads them
 ```
 
 The unit tests replace `sudo` and every dialog tool with a stub that records
