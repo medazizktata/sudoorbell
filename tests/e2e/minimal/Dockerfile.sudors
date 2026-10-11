@@ -1,0 +1,9 @@
+# Ubuntu 26.04 with sudo-rs (the Rust sudo newer Ubuntu releases ship as
+# their default) instead of the classic sudo, and nothing else.
+FROM ubuntu:26.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sudo-rs \
+	&& { [ -e /usr/bin/sudo ] || ln -s sudo-rs /usr/bin/sudo; }
+RUN useradd -m -s /bin/bash tester && echo 'tester:correct-horse' | chpasswd && echo 'tester ALL=(ALL) ALL' >/etc/sudoers.d/tester
+COPY . /src
+USER tester
+WORKDIR /home/tester

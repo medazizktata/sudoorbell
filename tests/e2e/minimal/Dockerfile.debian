@@ -1,0 +1,8 @@
+# Debian slim plus sudo and nothing else: no ps (procps), no zsh, no python,
+# no jq, no tmux. /bin/sh is dash.
+FROM debian:bookworm-slim
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sudo
+RUN useradd -m -s /bin/bash tester && echo 'tester:correct-horse' | chpasswd && echo 'tester ALL=(ALL) ALL' >/etc/sudoers.d/tester
+COPY . /src
+USER tester
+WORKDIR /home/tester

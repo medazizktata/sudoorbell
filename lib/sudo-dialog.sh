@@ -29,6 +29,44 @@ sd_trim() {
 	sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
+# Process details come from /proc on Linux: it is there even where ps is not
+# installed (Debian slim) or cannot pick one process (BusyBox). Elsewhere
+# (macOS), from ps. Decided by the real platform, never by SD_OS.
+sd_use_proc() {
+	[ "$(uname -s)" != Darwin ] && [ -r /proc/self/status ]
+}
+
+# sd_proc FIELD PID: comm, euid, ppid, args or start (an opaque start time).
+# Empty when the process is gone or cannot be inspected.
+sd_proc() {
+	if sd_use_proc; then
+		[ -r "/proc/$2/status" ] || return 0
+		case $1 in
+		comm) cat "/proc/$2/comm" ;;
+		euid) awk '$1 == "Uid:" { print $3 }' "/proc/$2/status" ;;
+		ppid) awk '$1 == "PPid:" { print $2 }' "/proc/$2/status" ;;
+		args) tr '\000' ' ' <"/proc/$2/cmdline" ;;
+		start) sed 's/.*) //' "/proc/$2/stat" | cut -d' ' -f20 ;;
+		esac 2>/dev/null | sd_trim
+	else
+		case $1 in
+		comm) sd_ps -o comm= -p "$2" ;;
+		euid) sd_ps -o uid= -p "$2" ;;
+		ppid) sd_ps -o ppid= -p "$2" ;;
+		args) sd_ps -o args= -p "$2" ;;
+		start) sd_ps -o lstart= -p "$2" ;;
+		esac 2>/dev/null | sd_trim
+	fi
+}
+
+sd_alive() {
+	if sd_use_proc; then
+		[ -d "/proc/$1" ]
+	else
+		sd_ps -p "$1" >/dev/null 2>&1
+	fi
+}
+
 # SD_OS lets the tests exercise one platform's logic on the other.
 sd_os() {
 	if [ -n "${SD_OS:-}" ]; then
@@ -43,15 +81,15 @@ sd_os() {
 
 # The command line of process $1, shortened to fit a dialog.
 sd_command_of() {
-	sd_ps -o args= -p "$1" 2>/dev/null | sd_trim | cut -c1-"$SD_MAX_COMMAND"
+	sd_proc args "$1" | cut -c1-"$SD_MAX_COMMAND"
 }
 
 # Is process $1 a sudo running as root? sudo forks the askpass helper from its
 # own process, which keeps root as its effective uid, so a real request always
 # passes and a direct call from an ordinary process never does.
 sd_parent_is_sudo() {
-	comm=$(sd_ps -o comm= -p "$1" 2>/dev/null | sd_trim)
-	euid=$(sd_ps -o uid= -p "$1" 2>/dev/null | sd_trim)
+	comm=$(sd_proc comm "$1")
+	euid=$(sd_proc euid "$1")
 	case ${comm##*/} in
 	sudo | sudo-rs) [ "$euid" = 0 ] ;;
 	*) return 1 ;;
@@ -61,21 +99,21 @@ sd_parent_is_sudo() {
 # The program that asked for sudo: the first ancestor of process $1 that is not
 # a shell or a wrapper, e.g. "codex" or "claude". Empty if none is found.
 sd_requester() {
-	pid=$(sd_ps -o ppid= -p "$1" 2>/dev/null | sd_trim)
+	pid=$(sd_proc ppid "$1")
 	i=0
 	while [ -n "$pid" ] && [ "$pid" -gt 1 ] && [ $i -lt 8 ]; do
-		name=$(sd_ps -o comm= -p "$pid" 2>/dev/null | sd_trim)
+		name=$(sd_proc comm "$pid")
 		name=${name##*/}
 		name=${name#-}
 		case $name in
-		sh | bash | zsh | dash | ksh | mksh | fish | env | login | script | sudo | timeout | nohup | xargs | setsid | perl) ;;
+		sh | ash | bash | zsh | dash | ksh | mksh | fish | busybox | env | login | script | sudo | timeout | nohup | xargs | setsid | perl) ;;
 		'') return ;;
 		*)
 			printf '%s\n' "$name"
 			return
 			;;
 		esac
-		pid=$(sd_ps -o ppid= -p "$pid" 2>/dev/null | sd_trim)
+		pid=$(sd_proc ppid "$pid")
 		i=$((i + 1))
 	done
 }
@@ -107,7 +145,7 @@ sd_attempt() {
 		echo 1
 		return
 	}
-	started=$(sd_ps -o lstart= -p "$1" 2>/dev/null | sd_trim)
+	started=$(sd_proc start "$1")
 	file=$dir/attempt.$1
 	count=0
 	if [ -f "$file" ]; then
@@ -122,7 +160,7 @@ sd_attempt() {
 	# Forget requests whose sudo has exited.
 	for f in "$dir"/attempt.*; do
 		[ -f "$f" ] || continue
-		sd_ps -p "${f##*/attempt.}" >/dev/null 2>&1 || rm -f "$f"
+		sd_alive "${f##*/attempt.}" || rm -f "$f"
 	done
 	echo "$count"
 }

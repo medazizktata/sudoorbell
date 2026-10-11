@@ -47,6 +47,18 @@ if command -v zsh >/dev/null 2>&1; then
 	assert_contains "install: a fresh zsh -c has the function" "$got" "sudo: function"
 fi
 
+# POSIX login shells (sh -l, dash, BusyBox ash) read ~/.profile.
+printf 'echo profile-ran >/dev/null\n' >"$home/.profile"
+in_home "$cli" install --shell sh >/dev/null
+assert_eq "sh: block on top of ~/.profile" "$(sed -n 1p "$home/.profile")" "# >>> sudo-dialog >>>"
+for login_sh in sh dash; do
+	command -v $login_sh >/dev/null 2>&1 || continue
+	# shellcheck disable=SC2016 # expanded by the login shell
+	assert_eq "sh: a fresh '$login_sh -lc' has SUDO_ASKPASS and the function" \
+		"$(env -i HOME="$home" PATH="$PATH" $login_sh -lc 'echo "$SUDO_ASKPASS"; type sudo | grep -c function' </dev/null 2>/dev/null | tr '\n' ' ')" \
+		"$prefix/libexec/sudo-dialog-askpass 1 "
+done
+
 # The installed command is a symlink; it must find its library through it.
 assert_eq "installed command: runs through its symlink" "$(in_home "$home/.local/bin/sudo-dialog" version 2>&1)" "$(sh "$cli" version)"
 assert_contains "installed command: approve works through it" "$(in_home "$home/.local/bin/sudo-dialog" approve </dev/null 2>&1)" "No sudo request is waiting."
@@ -56,6 +68,14 @@ assert_contains "doctor: sees the install" "$doctor" "OK   installed: $prefix"
 assert_contains "doctor: sees the deny rule" "$doctor" "sudo is denied to the agent"
 
 cp "$home/.zshenv" "$home/zshenv.before-conflict"
+# Without jq, doctor says it cannot check Claude Code rather than guessing.
+nojq=$(scratch)
+for t in sh cat sed awk grep tr cut head tail ls id uname env mktemp dirname readlink stat; do
+	p=$(command -v $t) && ln -s "$p" "$nojq/$t"
+done
+assert_contains "doctor: without jq, says it cannot check Claude Code" \
+	"$(in_home env PATH="$nojq" sh "$cli" doctor 2>&1)" "cannot read its settings without jq"
+
 printf 'export SUDO_ASKPASS=/elsewhere\n' >>"$home/.zshenv"
 assert_contains "doctor: warns about a second SUDO_ASKPASS" "$(in_home "$cli" doctor 2>&1)" "outside the sudo-dialog block"
 cp "$home/zshenv.before-conflict" "$home/.zshenv"

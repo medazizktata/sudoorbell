@@ -30,7 +30,7 @@ cp "$(command -v sleep)" "$fake"
 "$fake" 30 &
 named=$!
 sleep 1
-assert_eq "the impostor is named sudo" "$(sd_ps -o comm= -p $named | sed 's|.*/||')" sudo
+assert_eq "the impostor is named sudo" "$(sd_proc comm $named | sed 's|.*/||')" sudo
 if sd_parent_is_sudo $named; then not_ok "a non-root process named sudo is refused"; else ok "a non-root process named sudo is refused"; fi
 kill $named
 

@@ -1,0 +1,8 @@
+# Alpine plus sudo and nothing else: BusyBox for every utility (its ps has no
+# -p), no bash, no zsh, no python, no jq, no tmux. The login shell is ash.
+FROM alpine:latest
+RUN apk add --no-cache sudo
+RUN adduser -D -s /bin/sh tester && echo 'tester:correct-horse' | chpasswd && echo 'tester ALL=(ALL) ALL' >/etc/sudoers.d/tester
+COPY . /src
+USER tester
+WORKDIR /home/tester

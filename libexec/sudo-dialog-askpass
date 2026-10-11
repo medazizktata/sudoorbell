@@ -16,10 +16,16 @@ sudo_pid=$PPID
 
 # Only sudo gets a password out of this dialog. Anything else calling it
 # directly would otherwise get a ready-made, genuine-looking password prompt.
-if ! sd_ps -o pid= -p $$ >/dev/null 2>&1; then
-	# Some agent sandboxes (Codex's, on macOS) forbid reading process
-	# information, so the caller cannot be checked: refuse rather than guess.
-	sd_err "refusing to ask for a password: cannot check the caller here (process listing not permitted; is this a sandbox?)"
+if [ -z "$(sd_proc comm $$)" ]; then
+	# No way to read process information: no /proc and no usable ps, or a
+	# sandbox (Codex's, on macOS) forbids it. The caller cannot be checked, so
+	# refuse rather than guess.
+	sd_err "refusing to ask for a password: cannot check the caller here (process information is not readable: a sandbox, or no ps and no /proc)"
+	exit 1
+fi
+if sd_use_proc && [ ! -r "/proc/$sudo_pid/status" ]; then
+	# /proc mounted with hidepid hides sudo (a root process) from us.
+	sd_err "refusing to ask for a password: cannot see the calling process (is /proc mounted with hidepid? Its gid= option can let a group see processes)"
 	exit 1
 fi
 if ! sd_parent_is_sudo "$sudo_pid"; then

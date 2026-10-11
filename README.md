@@ -46,7 +46,7 @@ Options:
 
 | | |
 |---|---|
-| `--shell zsh,bash,fish` | which shells to set up (default: every one installed) |
+| `--shell zsh,bash,fish,sh` | which shells to set up (default: every one installed; `sh` covers POSIX login shells such as dash and BusyBox ash, through `~/.profile`) |
 | `--claude-deny` | also stop Claude Code's agent from running `sudo` at all (see below) |
 | `--claude-mcp[=form\|browser]` | give Claude Code a `sudo` tool that asks for the password itself ([Claude Code mode](#claude-code-mode-the-password-asked-inside-claude-code)) |
 
@@ -67,6 +67,16 @@ that rule too).
 - **No desktop** (SSH, servers, containers): nothing extra. tmux 3.2 or later
   gives you a popup; see [Without a desktop](#without-a-desktop).
 - `jq` only for `--claude-deny`.
+
+Nothing else: a POSIX shell and the basic utilities (`sed`, `awk`, `cut`, `tr`,
+`mkfifo`), from coreutils or BusyBox. On Linux, process details come from
+`/proc`, so `ps` is not needed. Tested end to end with real `sudo` on bare
+images: Debian slim (no `ps`, `/bin/sh` is dash), Alpine (BusyBox only, ash,
+no bash), and Ubuntu 26.04 with `sudo-rs` instead of the classic `sudo`.
+
+Not supported: `doas`, and a `/proc` mounted with `hidepid`, which hides the
+`sudo` process from the helper; it then refuses, saying so (the mount's `gid=`
+option can exempt a group).
 
 ## Without a desktop
 
@@ -230,6 +240,7 @@ The helper:
 ```sh
 sh tests/run.sh              # unit tests: macOS or Linux, no real sudo, no password (MCP server included)
 sh tests/e2e/linux/run.sh    # end to end in Docker: real sudo; zenity on Xvfb, then no display at all
+sh tests/e2e/minimal/run.sh  # bare images: Debian slim, Alpine/BusyBox, sudo-rs, hidepid
 ```
 
 The unit tests replace `sudo` and every dialog tool with a stub that records

@@ -25,7 +25,7 @@ run() {
 	sed -n 's/^arg: //p' "$SD_STUB_LOG" | tr '\n' ' ' | sed 's/ $//'
 }
 
-for sh_name in bash zsh; do
+for sh_name in bash zsh dash sh; do
 	command -v $sh_name >/dev/null 2>&1 || {
 		printf 'skip  %s not installed\n' $sh_name
 		continue

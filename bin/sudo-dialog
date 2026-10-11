@@ -1,7 +1,7 @@
 #!/bin/sh
 # sudo-dialog: set up, check and remove the sudo password dialog.
 #
-#   sudo-dialog install [--shell zsh|bash|fish|all] [--claude-deny] [--claude-mcp[=form|browser]]
+#   sudo-dialog install [--shell zsh|bash|fish|sh|all] [--claude-deny] [--claude-mcp[=form|browser]]
 #   sudo-dialog uninstall [--claude-deny] [--claude-mcp]
 #   sudo-dialog doctor
 #   sudo-dialog preview
@@ -60,6 +60,8 @@ rc_files() {
 		# and may not read .bashrc.
 		[ -f "$HOME/.bash_profile" ] && printf '%s\n' "$HOME/.bash_profile"
 		;;
+	# POSIX login shells (sh -l, dash, BusyBox ash) read ~/.profile.
+	sh) printf '%s\n' "$HOME/.profile" ;;
 	esac
 	return 0
 }
@@ -130,6 +132,11 @@ detect_shells() {
 	for s in zsh bash fish; do
 		command -v "$s" >/dev/null 2>&1 && found="$found $s"
 	done
+	# A plain POSIX login shell (Alpine's ash, dash), or nothing else at all.
+	case ${SHELL##*/} in
+	sh | ash | dash) found="$found sh" ;;
+	*) [ -n "$found" ] || found='sh' ;;
+	esac
 	printf '%s\n' "${found# }"
 }
 
@@ -190,9 +197,11 @@ cmd_install() {
 
 	for s in $shells; do
 		case $s in
-		zsh | bash)
-			where=bottom
-			[ "$s" = bash ] && where=top
+		zsh | bash | sh)
+			# zsh's .zshenv is read whole; bash and sh startup files often
+			# return early for non-interactive shells, so go on top there.
+			where=top
+			[ "$s" = zsh ] && where=bottom
 			for f in $(rc_files "$s"); do
 				add_block "$f" "$where"
 				say "  $s: $f"
@@ -239,7 +248,7 @@ cmd_uninstall() {
 		esac
 		shift
 	done
-	for s in zsh bash; do
+	for s in zsh bash sh; do
 		for f in $(rc_files "$s"); do
 			if has_block "$f"; then
 				remove_block "$f"
@@ -324,12 +333,13 @@ cmd_doctor() {
 		probe_shell "bash -c" "$posix_probe" bash -c
 		probe_shell "bash -lc" "$posix_probe" bash -lc
 	fi
+	probe_shell "sh -lc" "$posix_probe" sh -lc
 	if command -v fish >/dev/null 2>&1; then
 		# shellcheck disable=SC2016 # expanded by fish
 		probe_shell "fish -c" 'echo "$SUDO_ASKPASS"; if functions -q sudo; echo function; end' fish -c
 	fi
 
-	for s in zsh bash; do
+	for s in zsh bash sh; do
 		for f in $(rc_files "$s"); do
 			[ -f "$f" ] || continue
 			if has_block "$f"; then
@@ -348,7 +358,9 @@ cmd_doctor() {
 	browser) check OK "Claude Code: sudo tool registered; password asked on a local page with a hidden field" ;;
 	*) [ -f "$claude_json" ] && check OK "Claude Code: no sudo tool (optional: sudo-dialog install --claude-mcp)" ;;
 	esac
-	if [ -f "$claude_settings" ]; then
+	if [ -f "$claude_settings" ] && ! command -v jq >/dev/null 2>&1; then
+		check WARN "Claude Code: cannot read its settings without jq; the deny rule and sudo tool were not checked"
+	elif [ -f "$claude_settings" ]; then
 		if claude_has_rule; then
 			check OK "Claude Code: sudo is denied to the agent ($CLAUDE_RULE); you run it yourself with !sudo"
 		else
