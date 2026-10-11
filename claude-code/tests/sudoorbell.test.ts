@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { question, runsSudo, withoutSudo } from '../hooks/sudoorbell.ts'
+import { eventsIn, question, runsSudo, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
 
 // Stands for Claude Code beneath the mod: answers the question with `answer`
 // (or dismisses it when `answer` is null), runs Bash as a stub, and records
@@ -107,4 +107,81 @@ test('the question says who asked and ends as a question', async () => {
   expect(question('sudo id', true)).toContain('A subagent wants')
   expect(question('sudo id', false).endsWith('?')).toBe(true)
   expect(question('x'.repeat(5000), false).length).toBeLessThan(2300)
+})
+
+// The installed plugins as `claude plugin list --json` and their files give
+// them: `mods` maps a plugin's folder to its hooks module's source.
+function plugins(on, mods: Record<string, string>) {
+  const offered: string[][] = []
+  const asked: string[] = []
+  on('process.run', ($, e) => {
+    if (e.argv[0] === 'claude') {
+      const list = Object.keys(mods).map(root => ({ id: root + '@test', enabled: true, installPath: '/plugins/' + root }))
+      return { value: { exitCode: 0, stdout: JSON.stringify(list), stderr: '' } }
+    }
+    return { value: { exitCode: 1, stdout: '', stderr: '' } }
+  })
+  on('fs.read', ($, e) => {
+    const root = Object.keys(mods).find(r => e.path.startsWith('/plugins/' + r + '/'))
+    if (root === undefined) return { deny: 'missing' }
+    if (e.path.endsWith('/hooks/hooks.json')) return { value: JSON.stringify({ modules: ['./mod.ts'] }) }
+    return { value: mods[root] }
+  })
+  on('tool.call', ($, e) => {
+    if (e.tool === 'AskUserQuestion') {
+      const q = e.questions[0]
+      asked.push(q.question)
+      offered.push(q.options.map(o => (typeof o === 'string' ? o : o.label)))
+      return { result: { answers: { [q.question]: 'Deny' } } }
+    }
+    return { result: { stdout: 'ran', stderr: '', interrupted: false } }
+  })
+  return { offered, asked }
+}
+
+test('the password field is offered when no other mod could read it', async ($, on) => {
+  const seen = plugins(on, { quiet: "on('tool.call', h)\non('ui.render', { component: 'Pane' }, h)" })
+  await $.tool.call({ tool: 'Bash', command: 'sudo id -u' })
+  expect(seen.offered[0]).toEqual(['Approve', 'Type password here', 'Deny'])
+})
+
+test('the password field is withheld while another mod hooks ui.input', async ($, on) => {
+  const seen = plugins(on, { keylogger: "export function register(on) { on('ui.input', h) }" })
+  await $.tool.call({ tool: 'Bash', command: 'sudo id -u' })
+  expect(seen.offered[0]).toEqual(['Approve', 'Deny'])
+  expect(seen.asked[0]).toContain('keylogger could read it')
+})
+
+test('the password field is withheld while another mod hooks process.run, or everything', async ($, on) => {
+  const seen = plugins(on, { spawner: "on('process.*', h)", everything: 'on("*", h)' })
+  await $.tool.call({ tool: 'Bash', command: 'sudo id -u' })
+  expect(seen.offered[0]).toEqual(['Approve', 'Deny'])
+  expect(seen.asked[0]).toContain('spawner')
+  expect(seen.asked[0]).toContain('everything')
+})
+
+test('typing "Type password here" when it was not offered refuses', async ($, on) => {
+  on('tool.call', ($, e) => {
+    if (e.tool === 'AskUserQuestion') return { result: { answers: { [e.questions[0].question]: 'Type password here' } } }
+    throw new Error('the command must not run')
+  })
+  const out = await $.tool.call({ tool: 'Bash', command: 'sudo id -u' })
+  expect(out.deny).toContain('did not approve')
+})
+
+test('which event patterns could read a password', async () => {
+  expect(watches(['ui.input'])).toBe(true)
+  expect(watches(['ui.*'])).toBe(true)
+  expect(watches(['process.run'])).toBe(true)
+  expect(watches(['*'])).toBe(true)
+  expect(watches(['!tool.describe'])).toBe(true)
+  expect(watches(['ui.render', 'tool.call', 'ui.press', 'classic.*'])).toBe(false)
+  expect(eventsIn("on('ui.input', { plugin: 'x' }, h)\non(\"tool.call\", h)\non(`*`, h)")).toEqual(['ui.input', 'tool.call', '*'])
+})
+
+test('the command is sent to the waiting-request mode, inside a subshell', async () => {
+  const c = viaRequest('sudo id -u # a comment', "/tmp/it's")
+  expect(c.startsWith('(export SUDOORBELL_BACKEND=terminal SUDOORBELL_TOUCH_ID=off SUDOORBELL_NOTIFY=0 ')).toBe(true)
+  expect(c).toContain("SUDOORBELL_RUNTIME_DIR='/tmp/it'\\''s'")
+  expect(c.endsWith('sudo id -u # a comment\n)')).toBe(true)
 })

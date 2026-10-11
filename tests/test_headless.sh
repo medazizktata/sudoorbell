@@ -89,6 +89,22 @@ assert_eq "approve --deny: failure" "$(cat "$work/status")" 1
 assert_contains "approve --deny: says what it denied" "$said" "Denied"
 assert_eq "approve: nothing waiting" "$("$root/bin/sudoorbell" approve </dev/null)" "No sudo request is waiting."
 
+# For programs (the Claude Code plugin): list what waits, then answer one
+# request by its sudo process id, with the password on standard input.
+(sd_broker "$(sd_message 'sudo apt install curl' claude 1)" terminal $pid >"$work/out" 2>/dev/null; echo $? >"$work/status") &
+broker=$!
+wait_for "$dir/fifo.$pid"
+assert_eq "approve --pending: the pid and the command" "$("$root/bin/sudoorbell" approve --pending)" "$(printf '%s\tsudo apt install curl' $pid)"
+err=$(printf 'pw\n' | "$root/bin/sudoorbell" approve --stdin 2>&1)
+assert_contains "approve --stdin: refused without --pid" "$err" "needs --pid"
+err=$(printf 'pw\n' | "$root/bin/sudoorbell" approve --pid 999999 --stdin 2>&1)
+assert_contains "approve --pid: another process's id answers nothing" "$err" "no sudo request is waiting for process 999999"
+printf 'stdin-secret\n' | "$root/bin/sudoorbell" approve --pid $pid --stdin
+wait $broker
+assert_eq "approve --stdin: the password reaches sudo" "$(cat "$work/out")" stdin-secret
+assert_eq "approve --stdin: success" "$(cat "$work/status")" 0
+assert_eq "approve --pending: nothing left" "$("$root/bin/sudoorbell" approve --pending)" ""
+
 # The prompt never leaves the password in a plain file when the request has
 # gone: the pipe path is checked before writing.
 printf 'msg\n' >"$work/req"

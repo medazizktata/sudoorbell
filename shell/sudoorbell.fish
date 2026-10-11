@@ -40,7 +40,7 @@ if set -q SUDOORBELL_HOME; and test -x "$SUDOORBELL_HOME/libexec/sudoorbell-askp
         # macOS skips Touch ID when sudo is given -A. So with Touch ID on,
         # start sudo without -A and with DISPLAY set: with no terminal and a
         # display, sudo uses SUDO_ASKPASS by itself, after Touch ID.
-        if test (uname -s) = Darwin
+        if test (uname -s) = Darwin; and test "$SUDOORBELL_TOUCH_ID" != off
             and grep -q -E '^[[:space:]]*auth[[:space:]].*pam_(tid|watchid)\.so' /etc/pam.d/sudo_local /etc/pam.d/sudo 2>/dev/null
             set -q DISPLAY; or set -lx DISPLAY sudoorbell
             command sudo $argv

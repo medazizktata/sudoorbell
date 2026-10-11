@@ -5,7 +5,7 @@
 #   sudoorbell uninstall [--claude-deny] [--claude-mcp]
 #   sudoorbell doctor
 #   sudoorbell preview
-#   sudoorbell approve [--deny]
+#   sudoorbell approve [--deny] [--pending] [--pid N [--stdin]]
 #
 # approve answers sudo requests waiting for you when there is no desktop to
 # show a dialog on (SSH, servers, containers). --claude-mcp gives Claude Code a
@@ -432,29 +432,62 @@ cmd_preview() {
 }
 
 # Answer the requests waiting for a terminal, oldest first.
+#   --deny       refuse them
+#   --pending    list them, one per line: the sudo process id, a tab, the command
+#   --pid N      only the request of sudo process N
+#   --stdin      read the password from standard input instead of a terminal
+#                (for programs such as the Claude Code plugin; needs --pid)
 cmd_approve() {
-	deny=''
-	case ${1:-} in
-	--deny) deny=1 ;;
-	'') ;;
-	*) die "unknown option: $1" ;;
-	esac
+	deny='' pending='' only='' stdin=''
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--deny) deny=1 ;;
+		--pending) pending=1 ;;
+		--stdin) stdin=1 ;;
+		--pid)
+			[ $# -ge 2 ] || die "--pid needs a value"
+			case $2 in '' | *[!0-9]*) die "--pid needs a process id" ;; esac
+			only=$2
+			shift
+			;;
+		*) die "unknown option: $1" ;;
+		esac
+		shift
+	done
+	[ -z "$stdin" ] || [ -n "$only" ] || [ -n "$deny" ] || die "--stdin needs --pid, so the password goes to the request you meant"
 	dir=$(sd_state_dir) || die "no private state directory"
 	found=''
 	for req in "$dir"/req.*; do
 		[ -f "$req" ] || continue
-		fifo=$dir/fifo.${req##*/req.}
+		pid=${req##*/req.}
+		[ -z "$only" ] || [ "$pid" = "$only" ] || continue
+		fifo=$dir/fifo.$pid
 		[ -p "$fifo" ] || continue
 		found=1
+		if [ -n "$pending" ]; then
+			printf '%s\t%s\n' "$pid" "$(sed -n 3p "$req")"
+			continue
+		fi
 		if [ -n "$deny" ]; then
 			printf 'D\n' >"$fifo"
 			say "Denied: $(sed -n 3p "$req")"
 			continue
 		fi
+		if [ -n "$stdin" ]; then
+			# One line, kept out of argv and the environment, never echoed.
+			IFS= read -r password || password=''
+			printf 'P%s\n' "$password" >"$fifo"
+			password=''
+			continue
+		fi
 		[ -t 0 ] || die "approve needs a terminal to read the password (or use --deny)"
 		"$src/libexec/sudoorbell-prompt" "$req" "$fifo" || true
 	done
-	[ -n "$found" ] || say "No sudo request is waiting."
+	if [ -z "$found" ]; then
+		[ -n "$pending" ] && return 0
+		[ -n "$only" ] && die "no sudo request is waiting for process $only"
+		say "No sudo request is waiting."
+	fi
 }
 
 case ${1:-help} in

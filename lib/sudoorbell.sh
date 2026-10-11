@@ -120,7 +120,9 @@ sd_requester() {
 
 # A private directory for per-request state, owned by us and closed to others.
 sd_state_dir() {
-	base=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}
+	# SUDOORBELL_RUNTIME_DIR: set by the Claude Code plugin on both ends of a
+	# request it answers, so they meet even if their TMPDIR differs.
+	base=${SUDOORBELL_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}}
 	dir=${base%/}/sudoorbell-$(id -u)
 	if [ ! -d "$dir" ]; then
 		(umask 077 && mkdir "$dir") 2>/dev/null || return 1
