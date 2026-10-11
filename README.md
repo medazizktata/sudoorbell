@@ -424,6 +424,10 @@ A second run has no display: requests answered with `sudoorbell approve` and
 in a real tmux popup.
 CI runs both, plus `shellcheck`.
 
+## Changes
+
+What changed in each release is in [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 MIT
