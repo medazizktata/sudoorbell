@@ -1,41 +1,59 @@
 #!/usr/bin/env python3
 """sudo-dialog-mcp: run commands as root from Claude Code, with the password
-asked for inside Claude Code itself.
+asked for by Claude Code itself.
 
 An MCP server (stdio) with one tool, `sudo`. When the agent calls it, the
-server asks Claude Code to show a form (MCP elicitation) naming the command;
-you type your password there. The password goes from the form to this
-server and on to `sudo -S` through a pipe. It is never in the tool's result,
-so the model never sees it.
+server asks Claude Code for the password (MCP elicitation), in one of two
+ways:
 
-Every call needs the password again (`sudo -k`), so the agent cannot ride on
-a cached sudo session.
+  form     (default) a form inside Claude Code's own window. Claude Code has
+           no hidden input field yet, so the password is visible on screen
+           while you type it. It is not kept in the transcript, Claude Code's
+           MCP log (written as [REDACTED]) or the terminal scrollback.
+  browser  Claude Code offers to open a page served by this server on
+           127.0.0.1, with a hidden password field. The password never passes
+           through Claude Code at all; this is what the MCP specification
+           asks for with secrets.
+
+Either way the password goes to `sudo -S` through a pipe and is never in the
+tool's result, so the model never sees it. Every call needs the password
+again (`sudo -k`), so the agent cannot ride on a cached sudo session.
 
 Standard library only. Environment:
-  SUDO_DIALOG_MCP_SUDO     sudo binary to run (default: sudo; tests use a stub)
+  SUDO_DIALOG_MCP_MODE     form or browser (default: form)
   SUDO_DIALOG_MCP_TIMEOUT  seconds a command may run (default: 600)
+  SUDO_DIALOG_MCP_WAIT     browser mode: seconds to wait for the page (default: 300)
+  SUDO_DIALOG_MCP_SUDO     sudo binary to run (default: sudo; tests use a stub)
 """
 
+import html
 import json
 import os
+import queue
+import secrets
 import shlex
 import subprocess
 import sys
+import threading
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PROTOCOL_VERSION = "2025-06-18"
+PROTOCOL_VERSION = "2025-11-25"
 VERSION = "0.1.0"
 MAX_ATTEMPTS = 3
 MAX_OUTPUT = 100_000
+MODE = os.environ.get("SUDO_DIALOG_MCP_MODE", "form")
 SUDO = os.environ.get("SUDO_DIALOG_MCP_SUDO", "sudo")
 TIMEOUT = int(os.environ.get("SUDO_DIALOG_MCP_TIMEOUT", "600"))
+WAIT = int(os.environ.get("SUDO_DIALOG_MCP_WAIT", "300"))
 
 TOOL = {
     "name": "sudo",
     "description": (
-        "Run one command as root. The user is shown the command in a form inside "
-        "Claude Code and types their password there; it goes to sudo and is never "
-        "returned to you. Use this instead of running sudo in the shell. Give the "
-        "command as an argument list (no shell), and say why it needs root."
+        "Run one command as root. The user is shown the command and types their "
+        "password into Claude Code (or a local page it opens); it goes to sudo and "
+        "is never returned to you. Use this instead of running sudo in the shell. "
+        "Give the command as an argument list (no shell), and say why it needs root."
     ),
     "inputSchema": {
         "type": "object",
@@ -66,6 +84,9 @@ class Peer:
     def send(self, message):
         sys.stdout.write(json.dumps(message) + "\n")
         sys.stdout.flush()
+
+    def notify(self, method, params):
+        self.send({"jsonrpc": "2.0", "method": method, "params": params})
 
     def read(self):
         if self.pending:
@@ -104,76 +125,267 @@ def clip(data):
     return text
 
 
-def ask_password(peer, command_line, reason, attempt):
-    message = f"Run as root:\n\n  {command_line}\n\nReason: {reason}\n"
+def run_sudo(command, password):
+    """sudo -S -k: password on stdin, never a cached session. Returns
+    (completed process or None on timeout, wrong password?)."""
+    try:
+        done = subprocess.run(
+            [SUDO, "-S", "-k", "-p", "", "--", *command],
+            input=(password + "\n").encode(),
+            capture_output=True,
+            timeout=TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return None, False
+    wrong = done.returncode != 0 and b"incorrect password attempt" in done.stderr
+    return done, wrong
+
+
+def report(command_line, done):
+    if done is None:
+        return text_result(f"{command_line} did not finish within {TIMEOUT}s and was stopped.", True)
+    stdout, stderr = clip(done.stdout), clip(done.stderr)
+    body = f"$ {command_line}\nexit code: {done.returncode}\n"
+    if stdout:
+        body += f"\nstdout:\n{stdout}"
+    if stderr:
+        body += f"\nstderr:\n{stderr}"
+    return text_result(body, done.returncode != 0)
+
+
+def summary(command_line, reason, attempt):
+    # Claude Code shows the first few lines of the message; what matters first.
+    text = f"Run as root: {command_line}\nReason: {reason}"
     if attempt > 1:
-        message += f"\nWrong password. Attempt {attempt} of {MAX_ATTEMPTS}.\n"
-    message += "\nEnter your password to allow it, or decline."
-    result = peer.request(
-        "elicitation/create",
-        {
-            "message": message,
-            "requestedSchema": {
-                "type": "object",
-                "properties": {
-                    "password": {
-                        "type": "string",
-                        "title": "Password",
-                        "description": "Your login password, for sudo",
-                    }
+        text += f"\nWrong password. Attempt {attempt} of {MAX_ATTEMPTS}."
+    return text
+
+
+DECLINED = "The user declined; the command was not run."
+GAVE_UP = f"Wrong password {MAX_ATTEMPTS} times; the command was not run."
+
+
+# ── form mode: a field inside Claude Code ──────────────────────────
+
+
+def sudo_with_form(peer, command, command_line, reason):
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        result = peer.request(
+            "elicitation/create",
+            {
+                "mode": "form",
+                "message": summary(command_line, reason, attempt),
+                "requestedSchema": {
+                    "type": "object",
+                    "properties": {
+                        "password": {
+                            "type": "string",
+                            "title": "Password",
+                            "description": "Your login password, for sudo (shown while you type)",
+                        }
+                    },
+                    "required": ["password"],
                 },
-                "required": ["password"],
             },
-        },
-    )
-    if result.get("action") != "accept":
-        return None
-    return (result.get("content") or {}).get("password") or None
+        )
+        password = (result.get("content") or {}).get("password") if result.get("action") == "accept" else None
+        if not password:
+            return text_result(DECLINED, True)
+        done, wrong = run_sudo(command, password)
+        password = None
+        if not wrong:
+            return report(command_line, done)
+    return text_result(GAVE_UP, True)
 
 
-def run_sudo(peer, args):
+# ── browser mode: a local page with a hidden field ─────────────────
+
+PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Administrator access</title>
+<style>
+:root {{ color-scheme: light dark; --fg: #1d1d1f; --bg: #f5f5f7; --card: #fff; --muted: #6e6e73; --accent: #0a66d8; --bad: #c62828; }}
+@media (prefers-color-scheme: dark) {{ :root {{ --fg: #f5f5f7; --bg: #1c1c1e; --card: #2c2c2e; --muted: #a1a1a6; --accent: #4c9bff; --bad: #ff6b6b; }} }}
+body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg); font: 15px/1.45 -apple-system, system-ui, sans-serif; }}
+main {{ width: min(460px, calc(100vw - 32px)); background: var(--card); border-radius: 14px; padding: 24px; box-shadow: 0 8px 30px rgb(0 0 0 / .12); }}
+h1 {{ font-size: 17px; margin: 0 0 14px; }}
+pre {{ white-space: pre-wrap; word-break: break-all; background: var(--bg); padding: 10px 12px; border-radius: 8px; margin: 6px 0 12px; font: 13px ui-monospace, Menlo, monospace; }}
+.muted {{ color: var(--muted); }} .bad {{ color: var(--bad); font-weight: 600; }}
+input {{ width: 100%; box-sizing: border-box; padding: 10px 12px; font: inherit; border-radius: 8px; border: 1px solid var(--muted); background: var(--bg); color: var(--fg); margin: 6px 0 16px; }}
+.row {{ display: flex; gap: 10px; justify-content: flex-end; }}
+button {{ font: inherit; padding: 8px 18px; border-radius: 8px; border: 1px solid var(--muted); background: transparent; color: var(--fg); cursor: pointer; }}
+button.allow {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
+</style></head>
+<body><main>{body}</main></body></html>
+"""
+
+
+class AnswerPage:
+    """A one-time page on 127.0.0.1 that takes the password. Its URL holds an
+    unguessable token; it accepts requests only for that path and only with
+    a loopback Host header, and it stops once the request is settled."""
+
+    def __init__(self, command_line, reason):
+        self.command_line, self.reason = command_line, reason
+        self.token = secrets.token_urlsafe(24)
+        self.answers = queue.Queue()  # (allow, password) from the page
+        self.verdicts = queue.Queue()  # what the page should say next
+        self.attempt = 1
+        self.settled = False
+        page = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass  # nothing about requests goes anywhere
+
+            def ok_request(self):
+                port = page.server.server_address[1]
+                host = self.headers.get("Host", "")
+                if host not in (f"127.0.0.1:{port}", f"localhost:{port}"):
+                    self.reply(403, "<p>Forbidden.</p>")
+                    return False
+                if self.path.split("?")[0] != f"/{page.token}":
+                    self.reply(404, "<p>Not found.</p>")
+                    return False
+                if page.settled:
+                    self.reply(410, "<p>This request is already settled. You can close this tab.</p>")
+                    return False
+                return True
+
+            def reply(self, status, body):
+                data = PAGE.format(body=body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                if self.ok_request():
+                    self.reply(200, page.form())
+
+            def do_POST(self):
+                if not self.ok_request():
+                    return
+                length = min(int(self.headers.get("Content-Length") or 0), 64 * 1024)
+                fields = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+                allow = (fields.get("action") or [""])[0] == "allow"
+                password = (fields.get("password") or [""])[0]
+                if allow and not password:
+                    self.reply(200, page.form("Enter your password, or deny."))
+                    return
+                page.answers.put((allow, password))
+                password = None
+                kind, message = page.verdicts.get()
+                if kind == "retry":
+                    self.reply(200, page.form(message))
+                else:
+                    self.reply(200, f"<h1>{html.escape(message)}</h1><p class=muted>You can close this tab.</p>")
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    @property
+    def url(self):
+        return f"http://127.0.0.1:{self.server.server_address[1]}/{self.token}"
+
+    def form(self, error=""):
+        note = f'<p class=bad>{html.escape(error)}</p>' if error else ""
+        return (
+            "<h1>Administrator access</h1>"
+            f"<div class=muted>Run as root:</div><pre>{html.escape(self.command_line)}</pre>"
+            f"<div class=muted>Reason</div><p>{html.escape(self.reason)}</p>{note}"
+            f'<form method=post action="/{self.token}">'
+            '<label for=pw>Password</label>'
+            '<input id=pw name=password type=password autocomplete=current-password autofocus>'
+            '<div class=row><button name=action value=deny formnovalidate>Deny</button>'
+            '<button class=allow name=action value=allow>Allow</button></div></form>'
+        )
+
+    def wait(self):
+        try:
+            return self.answers.get(timeout=WAIT)
+        except queue.Empty:
+            return None
+
+    def retry(self, attempt):
+        self.verdicts.put(("retry", f"Wrong password. Attempt {attempt} of {MAX_ATTEMPTS}."))
+
+    def finish(self, message):
+        self.settled = True
+        self.verdicts.put(("done", message))
+
+    def close(self):
+        self.settled = True
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def sudo_with_browser(peer, command, command_line, reason):
+    page = AnswerPage(command_line, reason)
+    elicitation_id = secrets.token_hex(8)
+    try:
+        answer = peer.request(
+            "elicitation/create",
+            {
+                "mode": "url",
+                "elicitationId": elicitation_id,
+                "url": page.url,
+                "message": summary(command_line, reason, 1) + "\nOpen the page to enter your password; it stays out of Claude Code.",
+            },
+        )
+        if answer.get("action") != "accept":
+            return text_result(DECLINED, True)
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            got = page.wait()
+            if got is None:
+                return text_result(f"Nobody answered the page within {WAIT}s; the command was not run.", True)
+            allow, password = got
+            if not allow:
+                page.finish("Denied. The command was not run.")
+                return text_result(DECLINED, True)
+            done, wrong = run_sudo(command, password)
+            password = None
+            if not wrong:
+                page.finish("Allowed. The command has run." if done is not None else "The command timed out.")
+                return report(command_line, done)
+            if attempt < MAX_ATTEMPTS:
+                page.retry(attempt + 1)
+        page.finish(GAVE_UP)
+        return text_result(GAVE_UP, True)
+    finally:
+        page.close()
+        peer.notify("notifications/elicitation/complete", {"elicitationId": elicitation_id})
+
+
+def call_sudo(peer, args, elicitation):
     command = args.get("command")
     reason = (args.get("reason") or "").strip() or "(no reason given)"
     if not isinstance(command, list) or not command or not all(isinstance(a, str) for a in command):
         return text_result("`command` must be a non-empty list of strings.", True)
     command_line = "sudo " + shlex.join(command)
-
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        try:
-            password = ask_password(peer, command_line, reason, attempt)
-        except (RuntimeError, EOFError) as e:
-            return text_result(f"Could not ask the user for the password: {e}", True)
-        if password is None:
-            return text_result("The user declined; the command was not run.", True)
-        try:
-            # -S: password from stdin. -k: ignore any cached sudo session, so
-            # every call needs the user. -p '': no prompt text in the output.
-            done = subprocess.run(
-                [SUDO, "-S", "-k", "-p", "", "--", *command],
-                input=(password + "\n").encode(),
-                capture_output=True,
-                timeout=TIMEOUT,
-            )
-        except subprocess.TimeoutExpired:
-            return text_result(f"{command_line} did not finish within {TIMEOUT}s and was stopped.", True)
-        finally:
-            password = None
-        stderr = clip(done.stderr)
-        if done.returncode != 0 and "incorrect password attempt" in stderr:
-            continue
-        stdout = clip(done.stdout)
-        body = f"$ {command_line}\nexit code: {done.returncode}\n"
-        if stdout:
-            body += f"\nstdout:\n{stdout}"
-        if stderr:
-            body += f"\nstderr:\n{stderr}"
-        return text_result(body, done.returncode != 0)
-    return text_result(f"Wrong password {MAX_ATTEMPTS} times; the command was not run.", True)
+    if elicitation is None:
+        return text_result("This client cannot ask the user for a password (no MCP elicitation support).", True)
+    try:
+        if MODE == "browser":
+            # Never fall back to the visible form: browser mode was chosen to
+            # keep the password hidden.
+            if "url" not in elicitation:
+                return text_result("This client cannot open a page (no URL elicitation); browser mode needs it.", True)
+            return sudo_with_browser(peer, command, command_line, reason)
+        return sudo_with_form(peer, command, command_line, reason)
+    except (RuntimeError, EOFError) as e:
+        return text_result(f"Could not ask the user for the password: {e}", True)
 
 
 def main():
     peer = Peer()
-    client_can_elicit = False
+    elicitation = None
     while True:
         message = peer.read()
         if message is None:
@@ -182,7 +394,7 @@ def main():
         request_id = message.get("id")
         if method == "initialize":
             capabilities = (message.get("params") or {}).get("capabilities") or {}
-            client_can_elicit = "elicitation" in capabilities
+            elicitation = capabilities.get("elicitation")
             peer.send({
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -198,10 +410,8 @@ def main():
             params = message.get("params") or {}
             if params.get("name") != "sudo":
                 result = text_result(f"Unknown tool: {params.get('name')}", True)
-            elif not client_can_elicit:
-                result = text_result("This client cannot show a password form (no MCP elicitation support).", True)
             else:
-                result = run_sudo(peer, params.get("arguments") or {})
+                result = call_sudo(peer, params.get("arguments") or {}, elicitation)
             peer.send({"jsonrpc": "2.0", "id": request_id, "result": result})
         elif method == "ping":
             peer.send({"jsonrpc": "2.0", "id": request_id, "result": {}})
