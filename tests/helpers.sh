@@ -2,7 +2,7 @@
 # Minimal test helpers: no framework to install.
 
 passes=0 fails=0
-root=$(cd "$(dirname "$0")/.." && pwd -P)
+root=${SD_ROOT:-$(cd "$(dirname "$0")/.." && pwd -P)}
 
 ok() {
 	passes=$((passes + 1))
