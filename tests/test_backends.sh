@@ -53,11 +53,11 @@ assert_eq "allow: the password reaches sudo" "$(sd_ask "$message" zenity)" secre
 err=$(sd_show "$message" '' 2>&1 >/dev/null)
 assert_contains "no tool: explains" "$err" "no dialog tool found"
 
-assert_eq "backend: macOS uses osascript" "$(SD_OS=macos sd_backend)" osascript
+assert_eq "backend: macOS uses osascript" "$(SSH_CONNECTION="" SD_OS=macos sd_backend)" osascript
 assert_eq "backend: override wins" "$(SD_OS=linux SUDO_DIALOG_BACKEND=yad sd_backend)" yad
-assert_eq "backend: Linux prefers zenity" "$(SD_OS=linux XDG_CURRENT_DESKTOP=GNOME sd_backend)" zenity
-assert_eq "backend: KDE prefers kdialog" "$(SD_OS=linux XDG_CURRENT_DESKTOP=KDE sd_backend)" kdialog
+assert_eq "backend: Linux prefers zenity" "$(DISPLAY=:0 SD_OS=linux XDG_CURRENT_DESKTOP=GNOME sd_backend)" zenity
+assert_eq "backend: KDE prefers kdialog" "$(DISPLAY=:0 SD_OS=linux XDG_CURRENT_DESKTOP=KDE sd_backend)" kdialog
 only_askpass=$(stub_bin ssh-askpass)
-assert_eq "backend: falls back to ssh-askpass" "$(PATH=$only_askpass:/usr/bin:/bin && SD_OS=linux sd_backend)" ssh-askpass
+assert_eq "backend: falls back to ssh-askpass" "$(PATH=$only_askpass:/usr/bin:/bin && DISPLAY=:0 SD_OS=linux sd_backend)" ssh-askpass
 
 finish

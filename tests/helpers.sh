@@ -54,14 +54,28 @@ no_tty() {
 	perl -MPOSIX -e 'my $p = fork; if ($p) { waitpid($p, 0); exit($? >> 8) } POSIX::setsid(); exec @ARGV or die "exec: $!"' "$@"
 }
 
-# Run script file $1 with a terminal. (A file, because util-linux script takes
-# the command as one string.)
+# Run script file $1 with a terminal, typing the contents of file $2 (default:
+# nothing) into it. A file, because util-linux script takes the command as one
+# string. script's own stdin must not be a socket: macOS refuses.
+#
+# Typing waits a moment, like a person reading the prompt first: input sent
+# before the program turns echo off would be echoed, and an early end of input
+# would read as an empty answer.
 with_tty() {
-	# script's own stdin must not be a socket (macOS refuses); /dev/null is fine,
-	# the command still gets the new terminal.
-	if [ "$(uname -s)" = Darwin ]; then
-		script -q /dev/null sh "$1" </dev/null
+	if [ -n "${2:-}" ]; then
+		{
+			sleep 1.5
+			cat "$2"
+			sleep 1.5
+		} | run_script "$1"
 	else
-		script -qec "sh '$1'" /dev/null </dev/null
+		run_script "$1" </dev/null
+	fi
+}
+run_script() {
+	if [ "$(uname -s)" = Darwin ]; then
+		script -q /dev/null sh "$1"
+	else
+		script -qec "sh '$1'" /dev/null
 	fi
 }

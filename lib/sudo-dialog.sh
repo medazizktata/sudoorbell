@@ -7,6 +7,8 @@
 SD_TITLE=${SUDO_DIALOG_TITLE:-Administrator access}
 SD_TIMEOUT=${SUDO_DIALOG_TIMEOUT:-120}
 SD_MAX_COMMAND=300
+# Where sudo-dialog-prompt lives; the askpass helper sets it.
+SD_LIBEXEC=${SD_LIBEXEC:-}
 
 sd_err() {
 	printf 'sudo-dialog: %s\n' "$*" >&2
@@ -106,7 +108,7 @@ sd_attempt() {
 		return
 	}
 	started=$(sd_ps -o lstart= -p "$1" 2>/dev/null | sd_trim)
-	file=$dir/$1
+	file=$dir/attempt.$1
 	count=0
 	if [ -f "$file" ]; then
 		{
@@ -118,9 +120,9 @@ sd_attempt() {
 	count=$((count + 1))
 	printf '%s\n%s\n' "$started" "$count" >"$file"
 	# Forget requests whose sudo has exited.
-	for f in "$dir"/*; do
+	for f in "$dir"/attempt.*; do
 		[ -f "$f" ] || continue
-		sd_ps -p "${f##*/}" >/dev/null 2>&1 || rm -f "$f"
+		sd_ps -p "${f##*/attempt.}" >/dev/null 2>&1 || rm -f "$f"
 	done
 	echo "$count"
 }
@@ -147,32 +149,59 @@ sd_has_display() {
 	[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}${WAYLAND_SOCKET:-}" ]
 }
 
-# The dialog tool to use. SUDO_DIALOG_BACKEND overrides the choice.
+# Can a window be shown from here? On macOS, not from an SSH session: the
+# dialog would have no desktop to appear on.
+sd_has_gui() {
+	case $(sd_os) in
+	macos) [ -z "${SSH_CONNECTION:-}" ] ;;
+	*) sd_has_display ;;
+	esac
+}
+
+# tmux 3.2 added display-popup.
+sd_tmux_has_popup() {
+	version=$(tmux -V 2>/dev/null | sed 's/^tmux //; s/^next-//; s/[^0-9.].*//')
+	major=${version%%.*} minor=${version#*.}
+	minor=${minor%%.*}
+	[ -n "$major" ] && [ -n "$minor" ] || return 1
+	[ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 2 ]; }
+}
+
+# How to ask. SUDO_DIALOG_BACKEND overrides the choice. With a desktop: a
+# dialog window. Without one: a tmux popup when the request comes from inside
+# tmux, otherwise "terminal", where you answer with `sudo-dialog approve`.
 sd_backend() {
 	if [ -n "${SUDO_DIALOG_BACKEND:-}" ]; then
 		echo "$SUDO_DIALOG_BACKEND"
 		return
 	fi
-	if [ "$(sd_os)" = macos ]; then
-		echo osascript
+	if sd_has_gui; then
+		if [ "$(sd_os)" = macos ]; then
+			echo osascript
+			return
+		fi
+		candidates="zenity yad kdialog ksshaskpass lxqt-openssh-askpass ssh-askpass-gnome x11-ssh-askpass ssh-askpass"
+		case "${XDG_CURRENT_DESKTOP:-}" in
+		*KDE*) candidates="kdialog ksshaskpass $candidates" ;;
+		esac
+		for c in $candidates; do
+			if command -v "$c" >/dev/null 2>&1; then
+				echo "$c"
+				return
+			fi
+		done
+		for c in /usr/lib/ssh/x11-ssh-askpass /usr/libexec/openssh/ssh-askpass /usr/lib/openssh/gnome-ssh-askpass; do
+			if [ -x "$c" ]; then
+				echo "$c"
+				return
+			fi
+		done
+	fi
+	if [ -n "${TMUX:-}" ] && sd_tmux_has_popup; then
+		echo tmux
 		return
 	fi
-	candidates="zenity yad kdialog ksshaskpass lxqt-openssh-askpass ssh-askpass-gnome x11-ssh-askpass ssh-askpass"
-	case "${XDG_CURRENT_DESKTOP:-}" in
-	*KDE*) candidates="kdialog ksshaskpass $candidates" ;;
-	esac
-	for c in $candidates; do
-		if command -v "$c" >/dev/null 2>&1; then
-			echo "$c"
-			return
-		fi
-	done
-	for c in /usr/lib/ssh/x11-ssh-askpass /usr/libexec/openssh/ssh-askpass /usr/lib/openssh/gnome-ssh-askpass; do
-		if [ -x "$c" ]; then
-			echo "$c"
-			return
-		fi
-	done
+	echo terminal
 }
 
 # Show the dialog for message $1 with backend $2. The password goes to stdout;
@@ -235,4 +264,75 @@ sd_ask() {
 	else
 		return 1
 	fi
+}
+
+# ── Without a desktop ────────────────────────────────────────
+#
+# The request waits in the private state directory: req.<pid> holds the text
+# to show and fifo.<pid> is the pipe the answer comes back through. Whoever
+# answers (`sudo-dialog approve` in any terminal, or the tmux popup) writes one
+# line to the pipe: "P" and the password to allow, "D" to deny.
+
+# Tell the user's terminals that a request is waiting: an agent usually shows
+# a command's output only once it finishes, so this may be the only sign.
+# SUDO_DIALOG_NOTIFY=0 turns it off.
+sd_notify_ttys() {
+	[ "${SUDO_DIALOG_NOTIFY:-1}" = 0 ] && return 0
+	notice=$1
+	uid=$(id -u)
+	for t in /dev/pts/[0-9]* /dev/ttys[0-9]*; do
+		[ -c "$t" ] && [ -w "$t" ] || continue
+		# shellcheck disable=SC2012,SC2046 # one known path; ls -n reads the owner portably
+		owner=$(set -- $(ls -nd "$t") && echo "$3")
+		[ "$owner" = "$uid" ] || continue
+		# In the background: a terminal with output paused must not hold us up.
+		(printf '\a\r\n%s\r\n' "$notice" >"$t") 2>/dev/null &
+	done
+	return 0
+}
+
+# Wait up to $2 seconds for one line on pipe $1 and print it ("T" on timeout).
+sd_read_answer() {
+	fifo=$1
+	# Nobody answering would block the read forever; this writer ends it. Its
+	# own output goes nowhere: holding our stdout open would make a caller's
+	# $(...) wait for the whole timeout.
+	(sleep "$2" && [ -p "$fifo" ] && printf 'T\n' >"$fifo") >/dev/null 2>&1 &
+	watchdog=$!
+	IFS= read -r line <"$fifo"
+	kill "$watchdog" 2>/dev/null
+	printf '%s\n' "$line"
+}
+
+# sd_broker MESSAGE BACKEND SUDO_PID: wait for an answer from a terminal and
+# print the password if the request was allowed.
+sd_broker() {
+	message=$1 backend=$2 pid=$3
+	dir=$(sd_state_dir) || {
+		sd_err "no private state directory; cannot wait for an answer"
+		return 1
+	}
+	req=$dir/req.$pid fifo=$dir/fifo.$pid
+	rm -f "$fifo" "$req"
+	mkfifo -m 600 "$fifo" || return 1
+	(umask 077 && printf '%s\n' "$message" >"$req")
+	# shellcheck disable=SC2064 # expand now: these paths are fixed
+	trap "rm -f '$fifo' '$req'" EXIT
+	trap 'exit 1' INT TERM HUP
+
+	command=$(printf '%s\n' "$message" | sed -n 3p)
+	if [ "$backend" = tmux ]; then
+		tmux display-popup -E -T " $SD_TITLE " -w 80 -h 16 \
+			"'$SD_LIBEXEC/sudo-dialog-prompt' '$req' '$fifo'" >/dev/null 2>&1 &
+	else
+		sd_notify_ttys "sudo-dialog: a program wants to run as root: $command -- answer with: sudo-dialog approve"
+	fi
+	sd_err "waiting for approval to run as root: $command"
+	sd_err "answer in any terminal with: sudo-dialog approve (gives up after ${SD_TIMEOUT}s)"
+
+	answer=$(sd_read_answer "$fifo" "$SD_TIMEOUT")
+	case $answer in
+	P*) printf '%s\n' "${answer#P}" ;;
+	*) return 1 ;;
+	esac
 }

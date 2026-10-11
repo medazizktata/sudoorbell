@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck bin/sudo-dialog lib/sudo-dialog.sh libexec/sudo-dialog-askpass shell/sudo-dialog.sh tests/*.sh tests/e2e/linux/*.sh
+      - run: shellcheck bin/sudo-dialog lib/sudo-dialog.sh libexec/sudo-dialog-askpass libexec/sudo-dialog-prompt shell/sudo-dialog.sh tests/*.sh tests/e2e/linux/*.sh
 
   unit:
     strategy:

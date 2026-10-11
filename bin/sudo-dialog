@@ -5,8 +5,10 @@
 #   sudo-dialog uninstall [--claude-deny]
 #   sudo-dialog doctor
 #   sudo-dialog preview
+#   sudo-dialog approve [--deny]
 #
-# Never runs sudo itself.
+# approve answers sudo requests waiting for you when there is no desktop to
+# show a dialog on (SSH, servers, containers). Never runs sudo itself.
 
 set -eu
 
@@ -31,7 +33,7 @@ die() {
 }
 
 usage() {
-	sed -n '2,10s/^# \{0,1\}//p' "$0"
+	sed -n '2,12s/^# \{0,1\}//p' "$0"
 }
 
 # ── shell startup files ──────────────────────────────────────
@@ -166,7 +168,7 @@ cmd_install() {
 			cp -R "$src/$d" "$prefix/$d"
 		done
 	fi
-	chmod 755 "$prefix/bin/sudo-dialog" "$prefix/libexec/sudo-dialog-askpass"
+	chmod 755 "$prefix/bin/sudo-dialog" "$prefix/libexec/sudo-dialog-askpass" "$prefix/libexec/sudo-dialog-prompt"
 	mkdir -p "$bindir"
 	ln -sf "$prefix/bin/sudo-dialog" "$bindir/sudo-dialog"
 	say "Installed to $prefix (command: $bindir/sudo-dialog)"
@@ -267,17 +269,13 @@ cmd_doctor() {
 	fi
 
 	backend=$(sd_backend)
-	if [ -n "$backend" ]; then
-		check OK "dialog: $backend"
-	else
-		check FAIL "no dialog tool: install zenity, kdialog, yad or an ssh-askpass"
-	fi
-	if [ "$os" = linux ]; then
-		if sd_has_display; then
-			check OK "display: ${WAYLAND_DISPLAY:-${DISPLAY:-socket}} (sudo uses the dialog by itself here, even without the shell function)"
-		else
-			check WARN "no DISPLAY/WAYLAND_DISPLAY in this shell: the dialog cannot open from here"
-		fi
+	case $backend in
+	terminal) check OK "no desktop here: requests wait for you to run 'sudo-dialog approve' in a terminal (inside tmux 3.2+, a popup opens instead)" ;;
+	tmux) check OK "no desktop here, inside tmux: requests open as a tmux popup" ;;
+	*) check OK "dialog: $backend" ;;
+	esac
+	if [ "$os" = linux ] && sd_has_display; then
+		check OK "display: ${WAYLAND_DISPLAY:-${DISPLAY:-socket}} (sudo uses the dialog by itself here, even without the shell function)"
 	fi
 
 	if [ "${SUDO_ASKPASS:-}" = "$prefix/libexec/sudo-dialog-askpass" ]; then
@@ -345,10 +343,9 @@ probe_shell() {
 
 cmd_preview() {
 	backend=$(sd_backend)
-	[ -n "$backend" ] || die "no dialog tool found"
-	if [ "$(sd_os)" = linux ] && ! sd_has_display; then
-		die "no graphical display in this shell"
-	fi
+	case $backend in
+	terminal | tmux) die "no desktop here: requests are answered with 'sudo-dialog approve' instead of a dialog" ;;
+	esac
 	message=$(sd_message "sudo apt install example-package" "sudo-dialog preview" 1)
 	# The preview never keeps what is typed.
 	if sd_show "$message" "$backend" >/dev/null; then
@@ -356,6 +353,32 @@ cmd_preview() {
 	else
 		say "Deny pressed, or the dialog timed out."
 	fi
+}
+
+# Answer the requests waiting for a terminal, oldest first.
+cmd_approve() {
+	deny=''
+	case ${1:-} in
+	--deny) deny=1 ;;
+	'') ;;
+	*) die "unknown option: $1" ;;
+	esac
+	dir=$(sd_state_dir) || die "no private state directory"
+	found=''
+	for req in "$dir"/req.*; do
+		[ -f "$req" ] || continue
+		fifo=$dir/fifo.${req##*/req.}
+		[ -p "$fifo" ] || continue
+		found=1
+		if [ -n "$deny" ]; then
+			printf 'D\n' >"$fifo"
+			say "Denied: $(sed -n 3p "$req")"
+			continue
+		fi
+		[ -t 0 ] || die "approve needs a terminal to read the password (or use --deny)"
+		"$src/libexec/sudo-dialog-prompt" "$req" "$fifo" || true
+	done
+	[ -n "$found" ] || say "No sudo request is waiting."
 }
 
 case ${1:-help} in
@@ -369,6 +392,10 @@ uninstall)
 	;;
 doctor) cmd_doctor ;;
 preview) cmd_preview ;;
+approve)
+	shift
+	cmd_approve "$@"
+	;;
 version | --version) say "$VERSION" ;;
 help | -h | --help) usage ;;
 *)

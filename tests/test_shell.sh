@@ -38,6 +38,7 @@ for sh_name in bash zsh; do
 	assert_eq "$sh_name: -A is not doubled" "$(run $sh_name NOTTY -A true)" "-A true"
 	assert_eq "$sh_name: -S after an option value is found" "$(run $sh_name NOTTY -u root -S true)" "-u root -S true"
 	assert_eq "$sh_name: a command's own -n is not sudo's" "$(run $sh_name NOTTY -u root head -n 1 /etc/hosts)" "-A -u root head -n 1 /etc/hosts"
+	# shellcheck disable=SC2016 # expanded by the shell under test
 	assert_eq "$sh_name: SUDO_ASKPASS is exported" \
 		"$(env SUDO_DIALOG_HOME="$root" $sh_name -c '. "$SUDO_DIALOG_HOME/shell/sudo-dialog.sh"; sh -c "echo \$SUDO_ASKPASS"' </dev/null)" \
 		"$root/libexec/sudo-dialog-askpass"

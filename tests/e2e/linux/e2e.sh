@@ -4,7 +4,9 @@
 # "tester", whose password is correct-horse. xdotool plays the user: it finds
 # the dialog on the virtual display and types into it.
 
+# shellcheck disable=SC2034 # read by helpers.sh
 SD_ROOT=/src
+# shellcheck source=../../helpers.sh
 . /src/tests/helpers.sh
 
 password=correct-horse

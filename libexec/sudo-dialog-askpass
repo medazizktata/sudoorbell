@@ -2,13 +2,15 @@
 # sudo-dialog-askpass: the program sudo runs (SUDO_ASKPASS) to get your
 # password when there is no terminal to ask in. It shows a dialog naming the
 # command and the program that asked, and prints what you type to stdout, which
-# only sudo reads.
+# only sudo reads. Without a desktop, the request waits for an answer from a
+# terminal (`sudo-dialog approve`) or a tmux popup instead.
 #
 # sudo passes its own prompt as $1; the dialog builds a clearer one instead.
 
 here=$(cd "$(dirname "$0")" && pwd -P) || exit 1
 # shellcheck source=../lib/sudo-dialog.sh
 . "$here/../lib/sudo-dialog.sh" || exit 1
+SD_LIBEXEC=$here
 
 sudo_pid=$PPID
 
@@ -25,13 +27,13 @@ if ! sd_parent_is_sudo "$sudo_pid"; then
 	exit 1
 fi
 
-if [ "$(sd_os)" = linux ] && ! sd_has_display; then
-	sd_err "no graphical display (DISPLAY or WAYLAND_DISPLAY is not set)"
-	exit 1
-fi
-
 command=$(sd_command_of "$sudo_pid")
 requester=$(sd_requester "$sudo_pid")
 attempt=$(sd_attempt "$sudo_pid")
+message=$(sd_message "$command" "$requester" "$attempt")
+backend=$(sd_backend)
 
-sd_ask "$(sd_message "$command" "$requester" "$attempt")" "$(sd_backend)"
+case $backend in
+tmux | terminal) sd_broker "$message" "$backend" "$sudo_pid" ;;
+*) sd_ask "$message" "$backend" ;;
+esac

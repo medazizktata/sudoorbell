@@ -1,0 +1,43 @@
+#!/bin/sh
+# sudo-dialog-prompt REQUEST PIPE: answer one waiting sudo request in this
+# terminal. Used by `sudo-dialog approve` and by the tmux popup. Shows the
+# request, reads the password without echoing it, and writes the answer to the
+# request's pipe: "P" and the password to allow, "D" to deny.
+
+req=$1 fifo=$2
+
+if [ ! -p "$fifo" ] || [ ! -f "$req" ]; then
+	echo "This request is no longer waiting." >&2
+	exit 1
+fi
+
+printf '\n'
+cat "$req"
+printf '\n\nPassword (leave empty to deny): '
+
+trap 'stty echo 2>/dev/null; printf "\n"; exit 1' INT TERM HUP
+stty -echo 2>/dev/null
+IFS= read -r password
+stty echo 2>/dev/null
+printf '\n'
+
+if [ -n "$password" ]; then
+	answer="P$password"
+else
+	answer=D
+fi
+password=''
+
+if [ ! -p "$fifo" ]; then
+	echo "This request stopped waiting (timed out or cancelled)." >&2
+	exit 1
+fi
+printf '%s\n' "$answer" >"$fifo"
+answer=''
+# Had the request gone between the check and the write, the shell made a plain
+# file holding the answer instead. Never leave that behind.
+if [ -f "$fifo" ] && [ ! -p "$fifo" ]; then
+	rm -f "$fifo"
+	echo "This request stopped waiting (timed out or cancelled)." >&2
+	exit 1
+fi

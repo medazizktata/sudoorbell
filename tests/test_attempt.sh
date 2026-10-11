@@ -21,7 +21,7 @@ assert_eq "state directory is private" "$(ls -ld "$dir" | cut -c1-10)" "drwx----
 kill $other
 wait $other 2>/dev/null
 sd_attempt $target >/dev/null
-[ -e "$dir/$other" ] && not_ok "state of a finished request is removed" || ok "state of a finished request is removed"
+if [ -e "$dir/attempt.$other" ]; then not_ok "state of a finished request is removed"; else ok "state of a finished request is removed"; fi
 
 # A state directory others can write to is not trusted: no state is kept.
 XDG_RUNTIME_DIR=$(scratch)
