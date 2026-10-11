@@ -376,7 +376,9 @@ sd_notify_ttys() {
 	notice=$1
 	uid=$(id -u)
 	for t in /dev/pts/[0-9]* /dev/ttys[0-9]*; do
-		[ -c "$t" ] && [ -w "$t" ] || continue
+		if [ ! -c "$t" ] || [ ! -w "$t" ]; then
+			continue
+		fi
 		# shellcheck disable=SC2012,SC2046 # one known path; ls -n reads the owner portably
 		owner=$(set -- $(ls -nd "$t") && echo "$3")
 		[ "$owner" = "$uid" ] || continue
