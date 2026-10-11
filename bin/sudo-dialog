@@ -1,0 +1,369 @@
+#!/bin/sh
+# sudo-dialog: set up, check and remove the sudo password dialog.
+#
+#   sudo-dialog install [--shell zsh|bash|fish|all] [--claude-deny]
+#   sudo-dialog uninstall [--claude-deny]
+#   sudo-dialog doctor
+#   sudo-dialog preview
+#
+# Never runs sudo itself.
+
+set -eu
+
+VERSION=0.1.0
+MARK_BEGIN='# >>> sudo-dialog >>>'
+MARK_END='# <<< sudo-dialog <<<'
+CLAUDE_RULE='Bash(sudo:*)'
+
+src=$(cd "$(dirname "$0")/.." && pwd -P)
+prefix=${SUDO_DIALOG_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/sudo-dialog}
+bindir=${SUDO_DIALOG_BINDIR:-$HOME/.local/bin}
+claude_settings=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json
+fish_conf=${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/sudo-dialog.fish
+
+# shellcheck source=../lib/sudo-dialog.sh
+. "$src/lib/sudo-dialog.sh"
+
+say() { printf '%s\n' "$*"; }
+die() {
+	printf 'sudo-dialog: %s\n' "$*" >&2
+	exit 1
+}
+
+usage() {
+	sed -n '2,10s/^# \{0,1\}//p' "$0"
+}
+
+# ── shell startup files ──────────────────────────────────────
+
+rc_files() {
+	case $1 in
+	zsh) printf '%s\n' "${ZDOTDIR:-$HOME}/.zshenv" ;;
+	bash)
+		printf '%s\n' "$HOME/.bashrc"
+		# Login shells (`bash -l`, used by some agents) read .bash_profile
+		# and may not read .bashrc.
+		[ -f "$HOME/.bash_profile" ] && printf '%s\n' "$HOME/.bash_profile"
+		;;
+	esac
+	return 0
+}
+
+block() {
+	printf '%s\n' "$MARK_BEGIN" \
+		"# Password dialog for sudo when there is no terminal. Remove with: sudo-dialog uninstall" \
+		"export SUDO_DIALOG_HOME=\"$prefix\"" \
+		"[ -r \"\$SUDO_DIALOG_HOME/shell/sudo-dialog.sh\" ] && . \"\$SUDO_DIALOG_HOME/shell/sudo-dialog.sh\"" \
+		"$MARK_END"
+}
+
+# Print file $1 without the sudo-dialog block.
+without_block() {
+	awk -v b="$MARK_BEGIN" -v e="$MARK_END" '
+		$0 == b { inside = 1; next }
+		$0 == e { inside = 0; next }
+		!inside { print }
+	' "$1"
+}
+
+has_block() {
+	[ -f "$1" ] && grep -qxF "$MARK_BEGIN" "$1"
+}
+
+add_block() {
+	file=$1
+	if [ -f "$file" ] && [ ! -f "$file.sudo-dialog.bak" ]; then
+		cp -p "$file" "$file.sudo-dialog.bak"
+	fi
+	tmp=$(mktemp "${file}.sudo-dialog.XXXXXX")
+	if [ -f "$file" ]; then
+		without_block "$file" >"$tmp"
+		# Start the block on a line of its own.
+		[ -s "$tmp" ] && [ -n "$(tail -c 1 "$tmp")" ] && printf '\n' >>"$tmp"
+	fi
+	block >>"$tmp"
+	[ -f "$file" ] && chmod "$(file_mode "$file")" "$tmp"
+	mv -f "$tmp" "$file"
+}
+
+remove_block() {
+	file=$1
+	has_block "$file" || return 0
+	tmp=$(mktemp "${file}.sudo-dialog.XXXXXX")
+	without_block "$file" >"$tmp"
+	chmod "$(file_mode "$file")" "$tmp"
+	mv -f "$tmp" "$file"
+}
+
+file_mode() {
+	if stat -f '%Lp' "$1" >/dev/null 2>&1; then
+		stat -f '%Lp' "$1"
+	else
+		stat -c '%a' "$1"
+	fi
+}
+
+detect_shells() {
+	found=
+	for s in zsh bash fish; do
+		command -v "$s" >/dev/null 2>&1 && found="$found $s"
+	done
+	printf '%s\n' "${found# }"
+}
+
+# ── Claude Code deny rule ────────────────────────────────────
+
+claude_has_rule() {
+	[ -f "$claude_settings" ] &&
+		jq -e --arg r "$CLAUDE_RULE" '(.permissions.deny // []) | index($r) != null' "$claude_settings" >/dev/null 2>&1
+}
+
+claude_edit() {
+	command -v jq >/dev/null 2>&1 || die "jq is needed to edit $claude_settings"
+	mkdir -p "$(dirname "$claude_settings")"
+	[ -f "$claude_settings" ] || printf '{}\n' >"$claude_settings"
+	[ -f "$claude_settings.sudo-dialog.bak" ] || cp -p "$claude_settings" "$claude_settings.sudo-dialog.bak"
+	tmp=$(mktemp "$claude_settings.XXXXXX")
+	jq --arg r "$CLAUDE_RULE" "$1" "$claude_settings" >"$tmp"
+	mv -f "$tmp" "$claude_settings"
+}
+
+# ── commands ─────────────────────────────────────────────────
+
+cmd_install() {
+	shells='' claude=''
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--shell)
+			[ $# -ge 2 ] || die "--shell needs a value"
+			shells=$2
+			shift
+			;;
+		--claude-deny) claude=1 ;;
+		*) die "unknown option: $1" ;;
+		esac
+		shift
+	done
+	case $prefix in
+	/*/sudo-dialog) ;;
+	*) die "refusing to install to $prefix: the directory must be an absolute path ending in /sudo-dialog" ;;
+	esac
+	[ -z "$shells" ] || [ "$shells" = all ] && shells=$(detect_shells)
+	shells=$(printf '%s' "$shells" | tr ',' ' ')
+
+	# Copy the program, so the repository can move or go away.
+	if [ "$src" != "$prefix" ]; then
+		mkdir -p "$prefix"
+		for d in bin lib libexec shell; do
+			rm -rf "${prefix:?}/$d"
+			cp -R "$src/$d" "$prefix/$d"
+		done
+	fi
+	chmod 755 "$prefix/bin/sudo-dialog" "$prefix/libexec/sudo-dialog-askpass"
+	mkdir -p "$bindir"
+	ln -sf "$prefix/bin/sudo-dialog" "$bindir/sudo-dialog"
+	say "Installed to $prefix (command: $bindir/sudo-dialog)"
+
+	for s in $shells; do
+		case $s in
+		zsh | bash)
+			for f in $(rc_files "$s"); do
+				add_block "$f"
+				say "  $s: $f"
+			done
+			;;
+		fish)
+			mkdir -p "$(dirname "$fish_conf")"
+			{
+				printf '%s\n' "$MARK_BEGIN"
+				printf 'set -gx SUDO_DIALOG_HOME "%s"\n' "$prefix"
+				# shellcheck disable=SC2016 # expanded by fish, not here
+				printf 'source "$SUDO_DIALOG_HOME/shell/sudo-dialog.fish"\n'
+				printf '%s\n' "$MARK_END"
+			} >"$fish_conf"
+			say "  fish: $fish_conf"
+			;;
+		*) die "unsupported shell: $s" ;;
+		esac
+	done
+
+	if [ -n "$claude" ]; then
+		# shellcheck disable=SC2016 # $r is a jq variable
+		claude_edit '.permissions.deny = (((.permissions.deny // []) - [$r]) + [$r])'
+		say "  Claude Code: added deny rule $CLAUDE_RULE to $claude_settings"
+	fi
+	say "Open a new terminal (and restart any AI agent) to pick it up. Check with: sudo-dialog doctor"
+}
+
+cmd_uninstall() {
+	claude=''
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--claude-deny) claude=1 ;;
+		*) die "unknown option: $1" ;;
+		esac
+		shift
+	done
+	for s in zsh bash; do
+		for f in $(rc_files "$s"); do
+			if has_block "$f"; then
+				remove_block "$f"
+				say "Removed from $f"
+			fi
+		done
+	done
+	if [ -f "$fish_conf" ] && grep -qxF "$MARK_BEGIN" "$fish_conf"; then
+		rm -f "$fish_conf"
+		say "Removed $fish_conf"
+	fi
+	if [ -L "$bindir/sudo-dialog" ]; then
+		rm -f "$bindir/sudo-dialog"
+	fi
+	# Only ever delete a directory that is recognisably ours.
+	case $prefix in
+	*/sudo-dialog)
+		if [ "$src" != "$prefix" ] && [ -x "$prefix/libexec/sudo-dialog-askpass" ]; then
+			rm -rf "${prefix:?}"
+			say "Removed $prefix"
+		fi
+		;;
+	esac
+	if [ -n "$claude" ] && claude_has_rule; then
+		# shellcheck disable=SC2016 # $r is a jq variable
+		claude_edit '.permissions.deny -= [$r]'
+		say "Removed deny rule $CLAUDE_RULE from $claude_settings"
+	fi
+	say "Open a new terminal for it to take effect."
+}
+
+check() {
+	# check OK|WARN|FAIL message
+	printf '  %-4s %s\n' "$1" "$2"
+}
+
+cmd_doctor() {
+	os=$(sd_os)
+	say "sudo-dialog $VERSION on $os"
+	sudo_bin=$(command -v sudo 2>/dev/null || true)
+	if [ -n "$sudo_bin" ]; then
+		check OK "sudo: $sudo_bin ($("$sudo_bin" -V 2>/dev/null | head -1))"
+	else
+		check FAIL "sudo not found"
+	fi
+
+	if [ -x "$prefix/libexec/sudo-dialog-askpass" ]; then
+		check OK "installed: $prefix"
+	else
+		check FAIL "not installed at $prefix (run: sudo-dialog install)"
+	fi
+
+	backend=$(sd_backend)
+	if [ -n "$backend" ]; then
+		check OK "dialog: $backend"
+	else
+		check FAIL "no dialog tool: install zenity, kdialog, yad or an ssh-askpass"
+	fi
+	if [ "$os" = linux ]; then
+		if sd_has_display; then
+			check OK "display: ${WAYLAND_DISPLAY:-${DISPLAY:-socket}} (sudo uses the dialog by itself here, even without the shell function)"
+		else
+			check WARN "no DISPLAY/WAYLAND_DISPLAY in this shell: the dialog cannot open from here"
+		fi
+	fi
+
+	if [ "${SUDO_ASKPASS:-}" = "$prefix/libexec/sudo-dialog-askpass" ]; then
+		check OK "this shell: SUDO_ASKPASS points at sudo-dialog"
+	elif [ -n "${SUDO_ASKPASS:-}" ]; then
+		check WARN "this shell: SUDO_ASKPASS is $SUDO_ASKPASS, not sudo-dialog"
+	else
+		check WARN "this shell: SUDO_ASKPASS is not set (open a new terminal after installing)"
+	fi
+
+	# What a tool sees when it runs a command through your shell, with no
+	# terminal: the way AI agents and editors run commands.
+	# shellcheck disable=SC2016 # expanded by the probed shell
+	posix_probe='echo "$SUDO_ASKPASS"; if type sudo 2>/dev/null | grep -q function; then echo function; fi'
+	if command -v zsh >/dev/null 2>&1; then
+		probe_shell "zsh -c" "$posix_probe" zsh -c
+	fi
+	if command -v bash >/dev/null 2>&1; then
+		probe_shell "bash -c" "$posix_probe" bash -c
+		probe_shell "bash -lc" "$posix_probe" bash -lc
+	fi
+	if command -v fish >/dev/null 2>&1; then
+		# shellcheck disable=SC2016 # expanded by fish
+		probe_shell "fish -c" 'echo "$SUDO_ASKPASS"; if functions -q sudo; echo function; end' fish -c
+	fi
+
+	for s in zsh bash; do
+		for f in $(rc_files "$s"); do
+			[ -f "$f" ] || continue
+			if has_block "$f"; then
+				check OK "startup file: $f"
+			fi
+			if without_block "$f" | grep -q 'SUDO_ASKPASS\|sudo()\|function sudo'; then
+				check WARN "$f also sets SUDO_ASKPASS or defines sudo outside the sudo-dialog block; remove that to avoid conflicts"
+			fi
+		done
+	done
+
+	if [ -f "$claude_settings" ]; then
+		if claude_has_rule; then
+			check OK "Claude Code: sudo is denied to the agent ($CLAUDE_RULE); you run it yourself with !sudo"
+		else
+			check WARN "Claude Code: no $CLAUDE_RULE deny rule; the agent can run sudo and you approve each in the dialog"
+		fi
+	fi
+}
+
+# probe_shell LABEL SCRIPT SHELL ARGS...: what SHELL reports when started fresh
+# with no terminal and stdin closed, the way an agent runs a command.
+probe_shell() {
+	label=$1 script=$2
+	shift 2
+	out=$(env -u SUDO_ASKPASS -u SUDO_DIALOG_HOME "$@" "$script" </dev/null 2>/dev/null || true)
+	askpass=$(printf '%s\n' "$out" | sed -n 1p)
+	if [ "$askpass" = "$prefix/libexec/sudo-dialog-askpass" ]; then
+		if printf '%s\n' "$out" | grep -qx function; then
+			check OK "$label: dialog active"
+		else
+			check WARN "$label: SUDO_ASKPASS set but no sudo function (enough on a Linux desktop, not on macOS)"
+		fi
+	else
+		check WARN "$label: not active (this shell does not read a startup file with the sudo-dialog block)"
+	fi
+}
+
+cmd_preview() {
+	backend=$(sd_backend)
+	[ -n "$backend" ] || die "no dialog tool found"
+	if [ "$(sd_os)" = linux ] && ! sd_has_display; then
+		die "no graphical display in this shell"
+	fi
+	message=$(sd_message "sudo apt install example-package" "sudo-dialog preview" 1)
+	# The preview never keeps what is typed.
+	if sd_show "$message" "$backend" >/dev/null; then
+		say "Allow pressed (input discarded)."
+	else
+		say "Deny pressed, or the dialog timed out."
+	fi
+}
+
+case ${1:-help} in
+install)
+	shift
+	cmd_install "$@"
+	;;
+uninstall)
+	shift
+	cmd_uninstall "$@"
+	;;
+doctor) cmd_doctor ;;
+preview) cmd_preview ;;
+version | --version) say "$VERSION" ;;
+help | -h | --help) usage ;;
+*)
+	usage >&2
+	exit 2
+	;;
+esac

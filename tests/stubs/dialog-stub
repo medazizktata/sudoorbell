@@ -1,0 +1,14 @@
+#!/bin/sh
+# Stands in for a dialog tool (zenity, kdialog, yad, osascript, ssh-askpass) or
+# for sudo. Records how it was called in $SD_STUB_LOG, then answers with
+# $SD_STUB_REPLY and exits with $SD_STUB_EXIT.
+{
+	printf 'called: %s\n' "${0##*/}"
+	for a in "$@"; do printf 'arg: %s\n' "$a"; done
+	if [ "${0##*/}" = osascript ]; then
+		printf 'stdin:\n'
+		cat
+	fi
+} >>"${SD_STUB_LOG:?}"
+printf '%s\n' "${SD_STUB_REPLY-secret}"
+exit "${SD_STUB_EXIT:-0}"
