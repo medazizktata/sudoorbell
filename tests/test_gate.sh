@@ -15,6 +15,13 @@ assert_eq "direct call: no password printed" "$out" ""
 assert_contains "direct call: says why" "$(cat "$SD_STUB_LOG.err")" "caller is not sudo"
 assert_eq "direct call: no dialog shown" "$(cat "$SD_STUB_LOG")" ""
 
+# Inside a sandbox that hides processes (Codex on macOS), the caller cannot
+# be checked: refuse, and say why.
+if command -v sandbox-exec >/dev/null 2>&1; then
+	err=$(sandbox-exec -p '(version 1)(allow default)(deny process-info*)' "$root/libexec/sudo-dialog-askpass" Password: 2>&1 >/dev/null)
+	assert_contains "sandboxed: refused with the reason" "$err" "cannot check the caller here"
+fi
+
 if sd_parent_is_sudo $$; then not_ok "this test shell is not taken for sudo"; else ok "this test shell is not taken for sudo"; fi
 
 # A process merely named sudo, not running as root, is not sudo either.
