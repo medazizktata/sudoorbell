@@ -56,9 +56,20 @@ export const register: Register = on => {
       return decided
     }
     // You approved this very call: lift the sudo deny rule and any ask, but
-    // keep a deny that comes from any other rule.
+    // keep a deny that comes from any other rule or check.
     if (decided.decision === 'deny' && !SUDO_RULE.test(decided.rule ?? '')) {
       return decided
+    }
+    // Claude Code names one rule, the first that matched, so the sudo rule
+    // can hide another: `sudo id && curl x` reports Bash(sudo:*) even when
+    // curl is denied too. Ask about the command without sudo, and keep any
+    // deny that remains.
+    const rest = withoutSudo(String((e.input as { command?: unknown }).command ?? ''))
+    if (rest.trim() !== '') {
+      const other = await $.tool.check({ tool: 'Bash', input: { command: rest } })
+      if (other.decision === 'deny') {
+        return other
+      }
     }
     return { decision: 'allow', reason: 'approved in sudoorbell' }
   }).catch(async ($, e, next) => {
@@ -86,6 +97,43 @@ export function runsSudo(command: string): boolean {
     }
   }
   return false
+}
+
+// sudo options that take a value, so the value is not read as the command.
+const SUDO_VALUE_OPTIONS = new Set(['-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-T', '-U'])
+
+/**
+ * The command with each `sudo` and its own options taken out, so the
+ * permission rules can judge what it runs: `cd x && sudo -u root make install`
+ * becomes `cd x && make install`.
+ */
+export function withoutSudo(command: string): string {
+  return command
+    .split(/(&&|\|\||\$\(|[;|&\n`(])/)
+    .map((part, index) => {
+      if (index % 2 === 1) {
+        return part // a separator, kept as it is
+      }
+      const lead = part.match(/^\s*/)?.[0] ?? ''
+      const words = part.trim().split(/\s+/).filter(w => w !== '')
+      let i = 0
+      while (i < words.length && (PREFIXES.has(words[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]))) {
+        i += 1
+      }
+      if (i < words.length && /(?:^|\/)sudo$/.test(words[i].replace(/^[\\{]+/, ''))) {
+        let j = i + 1
+        while (j < words.length && words[j].startsWith('-')) {
+          const option = words[j]
+          j += SUDO_VALUE_OPTIONS.has(option) ? 2 : 1
+          if (option === '--') {
+            break
+          }
+        }
+        words.splice(i, j - i)
+      }
+      return words.length > 0 ? lead + words.join(' ') + (part.match(/\s*$/)?.[0] ?? '') : part.replace(/\S+/g, '')
+    })
+    .join('')
 }
 
 /** The question you are asked, naming the command. */

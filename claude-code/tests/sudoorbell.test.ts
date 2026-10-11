@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { question, runsSudo } from '../hooks/sudoorbell.ts'
+import { question, runsSudo, withoutSudo } from '../hooks/sudoorbell.ts'
 
 // Stands for Claude Code beneath the mod: answers the question with `answer`
 // (or dismisses it when `answer` is null), runs Bash as a stub, and records
@@ -84,6 +84,22 @@ test('which commands run sudo', async () => {
   const no = ['echo sudo', 'sudoku', 'ls sudo', 'grep -r sudo .', 'cat /etc/sudoers.d/x', 'man sudo']
   for (const c of yes) expect([c, runsSudo(c)]).toEqual([c, true])
   for (const c of no) expect([c, runsSudo(c)]).toEqual([c, false])
+})
+
+test('withoutSudo leaves what the rules must still judge', async () => {
+  const cases: [string, string][] = [
+    ['sudo id -u && curl --version', 'id -u && curl --version'],
+    ['sudo -u root -g wheel make install', 'make install'],
+    ['cd x && sudo -k make install', 'cd x && make install'],
+    ['echo hi | sudo tee /etc/x', 'echo hi | tee /etc/x'],
+    ['FOO=1 sudo env', 'FOO=1 env'],
+    ['/usr/bin/sudo rm -rf /opt/x', 'rm -rf /opt/x'],
+    ['echo $(sudo cat /etc/shadow)', 'echo $(cat /etc/shadow)'],
+    ['sudo -- -weird', '-weird'],
+    ['sudo -v', ''],
+    ['ls sudo', 'ls sudo'],
+  ]
+  for (const [input, want] of cases) expect([input, withoutSudo(input).trim()]).toEqual([input, want])
 })
 
 test('the question says who asked and ends as a question', async () => {
