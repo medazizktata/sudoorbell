@@ -108,4 +108,46 @@ assert_contains "claude-mcp: uninstall removes it" "$(tr '\n' ' ' <"$SD_STUB_LOG
 err=$(in_home env SUDOORBELL_PREFIX="$home/somewhere" "$cli" install 2>&1)
 assert_contains "install: refuses a directory not named sudoorbell" "$err" "refusing to install"
 
+# Packaged like Homebrew: the files live in a versioned directory, reached
+# through a stable symlink (opt/sudoorbell -> Cellar/sudoorbell/VERSION).
+pkg=$(scratch)
+pkg_home=$(scratch)
+mkdir -p "$pkg/cellar/sudoorbell" "$pkg/opt"
+for d in bin lib libexec shell mcp; do cp -R "$root/$d" "$pkg/cellar/sudoorbell/$d"; done
+: >"$pkg/cellar/sudoorbell/lib/marker"
+ln -s "$pkg/cellar/sudoorbell" "$pkg/opt/sudoorbell"
+in_pkg_home() {
+	env HOME="$pkg_home" ZDOTDIR="$pkg_home" XDG_DATA_HOME="$pkg_home/.local/share" \
+		XDG_CONFIG_HOME="$pkg_home/.config" CLAUDE_CONFIG_DIR="$pkg_home/.claude" \
+		SUDOORBELL_PREFIX="$pkg/opt/sudoorbell" "$@"
+}
+pkg_files_intact() {
+	c=$pkg/cellar/sudoorbell
+	[ -f "$c/lib/marker" ] && [ -x "$c/bin/sudoorbell" ] && [ -x "$c/libexec/sudoorbell-askpass" ] &&
+		[ -f "$c/shell/sudoorbell.sh" ] && [ -x "$c/mcp/sudoorbell-mcp" ] && [ -L "$pkg/opt/sudoorbell" ]
+}
+
+# Without saying it is packaged: the install directory is the program itself,
+# through a symlink. It must not be copied over or removed.
+in_pkg_home "$pkg/cellar/sudoorbell/bin/sudoorbell" install --shell zsh >/dev/null 2>&1
+if pkg_files_intact; then ok "symlinked to itself: install leaves the files alone"; else not_ok "symlinked to itself: install leaves the files alone"; fi
+in_pkg_home "$pkg/cellar/sudoorbell/bin/sudoorbell" uninstall >/dev/null 2>&1
+if pkg_files_intact; then ok "symlinked to itself: uninstall leaves the files alone"; else not_ok "symlinked to itself: uninstall leaves the files alone"; fi
+
+# Packaged (SUDOORBELL_PACKAGED=1, as the Homebrew formula sets): use the
+# files in place, link nothing into ~/.local/bin, and never remove them.
+out=$(in_pkg_home env SUDOORBELL_PACKAGED=1 "$pkg/cellar/sudoorbell/bin/sudoorbell" install --shell zsh 2>&1)
+if pkg_files_intact; then ok "packaged: install leaves the files alone"; else not_ok "packaged: install leaves the files alone"; fi
+if [ -e "$pkg_home/.local/bin/sudoorbell" ] || [ -L "$pkg_home/.local/bin/sudoorbell" ]; then
+	not_ok "packaged: no command linked into ~/.local/bin"
+else
+	ok "packaged: no command linked into ~/.local/bin"
+fi
+assert_contains "packaged: the shell block uses the stable path" "$(cat "$pkg_home/.zshenv")" "SUDOORBELL_HOME=\"$pkg/opt/sudoorbell\""
+assert_contains "packaged: says where the files are" "$out" "$pkg/opt/sudoorbell"
+out=$(in_pkg_home env SUDOORBELL_PACKAGED=1 "$pkg/cellar/sudoorbell/bin/sudoorbell" uninstall 2>&1)
+if pkg_files_intact; then ok "packaged: uninstall leaves the files alone"; else not_ok "packaged: uninstall leaves the files alone"; fi
+assert_not_contains "packaged: uninstall removed the shell block" "$(cat "$pkg_home/.zshenv")" ">>> sudoorbell >>>"
+assert_contains "packaged: uninstall says how to remove the program" "$out" "package manager"
+
 finish

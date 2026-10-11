@@ -33,6 +33,9 @@ done
 src=$(cd "$(dirname "$self")/.." && pwd -P)
 prefix=${SUDOORBELL_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/sudoorbell}
 bindir=${SUDOORBELL_BINDIR:-$HOME/.local/bin}
+# Set by a package (the Homebrew formula): the package manager owns the files
+# in $prefix, so install uses them in place and uninstall leaves them.
+packaged=${SUDOORBELL_PACKAGED:-}
 claude_settings=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json
 fish_conf=${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/sudoorbell.fish
 
@@ -159,6 +162,14 @@ claude_edit() {
 
 # ── commands ─────────────────────────────────────────────────
 
+# Are $1 and $2 the same directory, once symlinks are resolved? False when
+# either does not exist.
+same_dir() {
+	a=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+	b=$(cd "$2" 2>/dev/null && pwd -P) || return 1
+	[ "$a" = "$b" ]
+}
+
 cmd_install() {
 	shells='' claude='' mcp=''
 	while [ $# -gt 0 ]; do
@@ -182,18 +193,25 @@ cmd_install() {
 	[ -z "$shells" ] || [ "$shells" = all ] && shells=$(detect_shells)
 	shells=$(printf '%s' "$shells" | tr ',' ' ')
 
-	# Copy the program, so the repository can move or go away.
-	if [ "$src" != "$prefix" ]; then
-		mkdir -p "$prefix"
-		for d in bin lib libexec shell mcp; do
-			rm -rf "${prefix:?}/$d"
-			cp -R "$src/$d" "$prefix/$d"
-		done
+	if [ -n "$packaged" ]; then
+		[ -x "$prefix/libexec/sudoorbell-askpass" ] || die "the package's files are missing from $prefix"
+		say "Using $prefix (installed by your package manager)"
+	else
+		# Copy the program, so the repository can move or go away. Never onto
+		# itself: $prefix can be this very directory through a symlink, and
+		# clearing it first would delete what is about to be copied.
+		if ! same_dir "$src" "$prefix"; then
+			mkdir -p "$prefix"
+			for d in bin lib libexec shell mcp; do
+				rm -rf "${prefix:?}/$d"
+				cp -R "$src/$d" "$prefix/$d"
+			done
+		fi
+		chmod 755 "$prefix/bin/sudoorbell" "$prefix/libexec/sudoorbell-askpass" "$prefix/libexec/sudoorbell-prompt" "$prefix/mcp/sudoorbell-mcp"
+		mkdir -p "$bindir"
+		ln -sf "$prefix/bin/sudoorbell" "$bindir/sudoorbell"
+		say "Installed to $prefix (command: $bindir/sudoorbell)"
 	fi
-	chmod 755 "$prefix/bin/sudoorbell" "$prefix/libexec/sudoorbell-askpass" "$prefix/libexec/sudoorbell-prompt" "$prefix/mcp/sudoorbell-mcp"
-	mkdir -p "$bindir"
-	ln -sf "$prefix/bin/sudoorbell" "$bindir/sudoorbell"
-	say "Installed to $prefix (command: $bindir/sudoorbell)"
 
 	for s in $shells; do
 		case $s in
@@ -264,18 +282,23 @@ cmd_uninstall() {
 		rm -f "$fish_conf"
 		say "Removed $fish_conf"
 	fi
-	if [ -L "$bindir/sudoorbell" ]; then
-		rm -f "$bindir/sudoorbell"
-	fi
-	# Only ever delete a directory that is recognisably ours.
-	case $prefix in
-	*/sudoorbell)
-		if [ "$src" != "$prefix" ] && [ -x "$prefix/libexec/sudoorbell-askpass" ]; then
-			rm -rf "${prefix:?}"
-			say "Removed $prefix"
+	if [ -n "$packaged" ]; then
+		say "The program stays in $prefix: remove it with your package manager (brew uninstall sudoorbell)"
+	else
+		if [ -L "$bindir/sudoorbell" ]; then
+			rm -f "$bindir/sudoorbell"
 		fi
-		;;
-	esac
+		# Only ever delete a directory that is recognisably ours, and never
+		# the copy that is running.
+		case $prefix in
+		*/sudoorbell)
+			if ! same_dir "$src" "$prefix" && [ -x "$prefix/libexec/sudoorbell-askpass" ]; then
+				rm -rf "${prefix:?}"
+				say "Removed $prefix"
+			fi
+			;;
+		esac
+	fi
 	if [ -n "$claude" ] && claude_has_rule; then
 		# shellcheck disable=SC2016 # $r is a jq variable
 		claude_edit '.permissions.deny -= [$r]'
@@ -356,7 +379,10 @@ cmd_doctor() {
 	done
 
 	claude_json=${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json
-	mode=$( [ -f "$claude_json" ] && jq -r --arg n "$MCP_NAME" '.mcpServers[$n].env.SUDOORBELL_MCP_MODE // empty' "$claude_json" 2>/dev/null || true)
+	mode=''
+	if [ -f "$claude_json" ]; then
+		mode=$(jq -r --arg n "$MCP_NAME" '.mcpServers[$n].env.SUDOORBELL_MCP_MODE // empty' "$claude_json" 2>/dev/null || true)
+	fi
 	case $mode in
 	form) check OK "Claude Code: sudo tool registered; password asked inside Claude Code (visible while typed)" ;;
 	browser) check OK "Claude Code: sudo tool registered; password asked on a local page with a hidden field" ;;
