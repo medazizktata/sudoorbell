@@ -48,8 +48,10 @@ let attempts = 0
 // back afterwards; and whether the box still shows a mask to clear.
 let draft: { text: string; cursor: number } | null = null
 let isBoxDirty = false
-// Whether the command sent through the request mode is still running.
+// Whether the command sent through the request mode is still running, and
+// what it printed once it ended (to tell a sudo that gave up).
 let isRunning = false
+let endedWith = ''
 // How to reach sudoorbell, set when a request is served.
 let bin = ''
 let runtime = ''
@@ -177,11 +179,7 @@ export const register: Register = on => {
     if (attempts > before) {
       return { drop: `sudoorbell: wrong password, sudo is asking again (attempt ${attempts} of 3). Claude never saw it.` }
     }
-    return {
-      drop: isRunning
-        ? 'sudoorbell: password handed to sudo; the command is running. Claude never saw it.'
-        : 'sudoorbell: password handed to sudo, and the command has finished. Claude never saw it.',
-    }
+    return { drop: outcome(isRunning, endedWith) }
   }).catch(async ($, e, next) => {
     // Never let a prompt typed while sudo waits through to Claude.
     return request === null ? next(e) : { drop: 'sudoorbell: could not hand the password over; sudo will time out.' }
@@ -220,9 +218,15 @@ async function typeHere($, e, next) {
   runtime = (await $.env.get('TMPDIR')) ?? '/tmp'
   attempts = 0
   isRunning = true
-  const ran = next({ ...e, command: viaRequest(String(e.command), runtime) }).finally(() => {
-    isRunning = false
-  })
+  endedWith = ''
+  const ran = next({ ...e, command: viaRequest(String(e.command), runtime) })
+    .then(result => {
+      endedWith = String(result?.text ?? JSON.stringify(result?.result ?? ''))
+      return result
+    })
+    .finally(() => {
+      isRunning = false
+    })
   try {
     while (isRunning && !next.signal.aborted) {
       if (request === null) {
@@ -389,6 +393,17 @@ export function settingIn(text: string, key: string): string {
     }
   }
   return value
+}
+
+/** What to tell you once the typed password is with sudo and no new attempt came. */
+export function outcome(running: boolean, output: string): string {
+  if (running) {
+    return 'sudoorbell: password handed to sudo; the command is running. Claude never saw it.'
+  }
+  if (/incorrect password attempt/.test(output)) {
+    return 'sudoorbell: wrong password; sudo gave up after 3 tries, so the command did not run. Claude never saw it.'
+  }
+  return 'sudoorbell: password handed to sudo, and the command has finished. Claude never saw it.'
 }
 
 /** Is sudoorbell on for client `name`, by the `clients` and `clients_off` settings? */

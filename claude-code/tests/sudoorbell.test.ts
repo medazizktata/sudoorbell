@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { choices, clientOn, edited, eventsIn, question, runsSudo, settingIn, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
+import { choices, clientOn, edited, outcome, eventsIn, question, runsSudo, settingIn, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
 
 // Stands for Claude Code beneath the mod: answers the question with `answer`
 // (or dismisses it when `answer` is null), runs Bash as a stub, and records
@@ -248,4 +248,10 @@ test('with claude switched off, the plugin asks nothing and lets the rules decid
   const out = await $.tool.call({ tool: 'Bash', command: 'sudo id -u' })
   expect(asked).toEqual([])
   expect(out.deny).toBeUndefined()
+})
+
+test('after the password, the message says what sudo did', async () => {
+  expect(outcome(true, '')).toContain('the command is running')
+  expect(outcome(false, 'Sorry, try again.\nsudo: 3 incorrect password attempts')).toContain('sudo gave up after 3 tries')
+  expect(outcome(false, 'uid=0')).toContain('the command has finished')
 })
