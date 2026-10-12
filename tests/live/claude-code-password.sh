@@ -83,8 +83,8 @@ say() {
 	$T send-keys -t "$1" Enter
 }
 turn_end() { # NAME COUNT-BEFORE SECONDS
-	local i
-	for i in $(seq 1 "$3"); do
+	local _
+	for _ in $(seq 1 "$3"); do
 		[ "$(dones "$1")" -gt "$2" ] && return 0
 		sleep 1
 	done
