@@ -19,7 +19,8 @@ What changed in each release of sudoorbell. The format follows
   the prompt, like Cursor's "Sudo Authentication Required" box, and Claude's
   prompt box becomes the password field, styled like shell mode: an amber
   `🔒`, a bold amber `•` per character, and an amber `🔒 sudo password` hint
-  line under it. Enter
+  line under it. With the plugin's `sudoorbell` theme picked in `/theme`, the
+  prompt border also turns amber while the field is open. Enter
   hands the password to that one sudo request through standard input, never
   to Claude; Esc cancels; the draft that was in the box comes back. Works at
   any terminal width. Offered only while no other enabled mod could read it

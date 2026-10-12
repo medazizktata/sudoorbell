@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { choices, clientOn, edited, outcome, shown, withoutShown, eventsIn, question, runsSudo, settingIn, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
+import { choices, clientOn, edited, newTheme, outcome, shown, withBorder, withoutShown, eventsIn, question, runsSudo, settingIn, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
 
 // Stands for Claude Code beneath the mod: answers the question with `answer`
 // (or dismisses it when `answer` is null), runs Bash as a stub, and records
@@ -276,4 +276,23 @@ test('the history loses only the entries Enter left in the field', async () => {
   ]
   const kept = withoutShown(lines.join('\n')).split('\n')
   expect(kept).toEqual([lines[0], lines[2], lines[3], lines[7], ''])
+})
+
+test('the plugin theme starts like the theme in use', async () => {
+  expect(JSON.parse(newTheme('light'))).toEqual({ name: 'sudoorbell', base: 'light', overrides: {} })
+  expect(JSON.parse(newTheme('auto')).base).toBe('dark')
+  expect(JSON.parse(newTheme('custom:mine')).base).toBe('dark')
+})
+
+test('the prompt border turns amber while the field is open, and back', async () => {
+  const plain = JSON.stringify({ name: 'sudoorbell', base: 'dark', overrides: { claude: '#bd93f9' } })
+  const on = withBorder(plain, true) ?? ''
+  expect(JSON.parse(on).overrides).toEqual({ claude: '#bd93f9', promptBorder: '#ffaf00' })
+  expect(withBorder(on, true)).toBeNull()
+  expect(JSON.parse(withBorder(on, false) ?? '').overrides).toEqual({ claude: '#bd93f9' })
+  expect(withBorder(plain, false)).toBeNull()
+  // A border the person chose is theirs: not taken off.
+  expect(withBorder(JSON.stringify({ base: 'dark', overrides: { promptBorder: '#00ff00' } }), false)).toBeNull()
+  expect(withBorder('not json', true)).toBeNull()
+  expect(withBorder('[1]', true)).toBeNull()
 })

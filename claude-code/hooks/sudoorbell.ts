@@ -26,6 +26,11 @@ const DENY = 'Deny'
 const LEAD = '🔒 '
 const MASK = '•'
 const FIELD = /^(?:🔒 ?•*|•+)$/u
+// The custom theme the plugin keeps (themes/sudoorbell.json in Claude Code's
+// config folder): picked once in /theme, its prompt border turns BORDER while
+// the box is the password field. Claude Code reloads a changed theme file live.
+const THEME = '/themes/sudoorbell.json'
+const BORDER = '#ffaf00'
 // The rule `sudoorbell install --claude-deny` adds, and other spellings of it.
 const SUDO_RULE = /^Bash\(sudo(?:[ :].*)?\)$/
 // The events through which another mod could read the password: each edit of
@@ -69,6 +74,7 @@ export const register: Register = on => {
   // such entry out when the next session starts.
   on('session.start', async ($, e, next) => {
     await scrubHistory($)
+    await setUpTheme($)
     return next(e)
   })
 
@@ -286,6 +292,7 @@ async function typeHere($, e, next) {
       needsScrub = false
       await scrubHistory($)
     }
+    await paintBorder($, false)
     if (draft !== null) {
       const back = draft
       draft = null
@@ -308,6 +315,7 @@ async function serveNext($) {
   if (draft === null) {
     // Keep what was in the prompt box, to give it back afterwards.
     draft = await $.prompt.read()
+    await paintBorder($, true)
   }
   typed = ''
   note = attempts > 1 ? 'Sorry, try again. Attempt ' + attempts + ' of 3.' : ''
@@ -349,8 +357,7 @@ async function refuse($, pid) {
 // alone when it cannot be read whole (over the 4 MiB a mod may read).
 async function scrubHistory($) {
   try {
-    const base = (await $.env.get('CLAUDE_CONFIG_DIR')) || ((await $.env.get('HOME')) ?? '') + '/.claude'
-    const file = base + '/history.jsonl'
+    const file = (await configDir($)) + '/history.jsonl'
     const text = await $.fs.read(file)
     const kept = withoutShown(text)
     if (kept !== text) {
@@ -358,6 +365,43 @@ async function scrubHistory($) {
     }
   } catch {
     // no history, or too large to read: nothing to take out
+  }
+}
+
+async function configDir($) {
+  return (await $.env.get('CLAUDE_CONFIG_DIR')) || ((await $.env.get('HOME')) ?? '') + '/.claude'
+}
+
+// Creates the plugin's theme the first time, like the theme in use, and
+// takes off a border a session that ended mid-field left on.
+async function setUpTheme($) {
+  const file = (await configDir($)) + THEME
+  try {
+    await $.fs.read(file)
+  } catch {
+    try {
+      const row = (await $.config.list()).find(r => r.key === 'theme')
+      await $.fs.write(file, newTheme(String(row?.value ?? '')))
+    } catch {
+      // no themes folder to write in: the field keeps its own colours only
+    }
+    return
+  }
+  await paintBorder($, false)
+}
+
+// Turns the plugin theme's prompt border to BORDER, or back. Leaves alone a
+// theme file that is missing or not the plugin's JSON.
+async function paintBorder($, isOn) {
+  try {
+    const file = (await configDir($)) + THEME
+    const text = await $.fs.read(file)
+    const next = withBorder(text, isOn)
+    if (next !== null) {
+      await $.fs.write(file, next)
+    }
+  } catch {
+    // no theme: nothing to paint
   }
 }
 
@@ -491,6 +535,40 @@ export function watches(patterns: readonly string[]): boolean {
     const re = new RegExp('^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$')
     return WATCHED.some(event => re.test(event))
   })
+}
+
+/** The plugin's theme file, made like `current` (the theme in use) where that is a preset. */
+export function newTheme(current: string): string {
+  const base = ['dark', 'light', 'dark-daltonized', 'light-daltonized', 'dark-ansi', 'light-ansi'].includes(current) ? current : 'dark'
+  return JSON.stringify({ name: 'sudoorbell', base, overrides: {} }, null, 2) + '\n'
+}
+
+/**
+ * A theme file's text with its prompt border set to BORDER (`isOn`) or with
+ * that border taken off; null when there is nothing to change or it is not
+ * a theme's JSON. A border someone chose stays when turning off.
+ */
+export function withBorder(text: string, isOn: boolean): string | null {
+  let theme
+  try {
+    theme = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (theme === null || typeof theme !== 'object' || Array.isArray(theme)) {
+    return null
+  }
+  const overrides = { ...(theme.overrides ?? {}) }
+  if (isOn === (overrides.promptBorder === BORDER)) {
+    return null
+  }
+  if (isOn) {
+    // shortcut: a border chosen in this theme is replaced, and gone after; keep it aside if anyone sets one.
+    overrides.promptBorder = BORDER
+  } else {
+    delete overrides.promptBorder
+  }
+  return JSON.stringify({ ...theme, overrides }, null, 2) + '\n'
 }
 
 /** What the prompt box shows for the password typed so far: the lead and a mask per character, painted as a password field. */

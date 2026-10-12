@@ -61,7 +61,7 @@ start() { # NAME
 	$T new-session -d -s "$1" -x 102 -y 50 \
 		env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u CLAUDE_CODE_EXECPATH \
 		ZDOTDIR="$work/zdot" PATH="$fake:$PATH" SUDOORBELL_HOME="$root" \
-		sh -c "cd '$work/cwd' && exec claude --strict-mcp-config --model haiku --plugin-dir '$mod'"
+		sh -c "cd '$work/cwd' && exec claude --strict-mcp-config --model haiku --plugin-dir '$mod' --settings '{\"theme\":\"custom:sudoorbell\"}'"
 	if wait_for "$1" 'trust this folder' 20; then
 		$T send-keys -t "$1" Down Enter
 	fi
@@ -131,6 +131,9 @@ screen ty | grep -E -q '^❯.🔒 •' && ok "the box starts with the lock" || b
 $T capture-pane -e -p -t ty >"$work/styled.txt"
 grep -E -q $'\e\\[1m(\e\\[[0-9;]*m)*🔒 •' "$work/styled.txt" && ok "the box is styled as a password field" || bad "the box is not styled"
 grep -E -q $'\e\\[38;5;[0-9]+m🔒 sudo password' "$work/styled.txt" && ok "the hint line says, in colour, the box is the password field" || bad "no coloured password hint line"
+# The prompt's border, in the plugin's theme: amber (214) while it is the field.
+border() { $T capture-pane -e -p -t "$1" | grep -a -o -E $'\e\\[38;5;[0-9]+m─' | tail -1 | grep -o -E '5;[0-9]+' | cut -d';' -f2; }
+[ "$(border ty)" = 214 ] && ok "the prompt border is amber" || bad "the prompt border is not amber ($(border ty))"
 $T send-keys -t ty Enter
 wait_for ty 'Attempt 2 of 3' 60 && ok "wrong password: asked again" || bad "wrong password: not asked again"
 wait_for ty 'wrong password, sudo is asking again' 10 && ok "wrong password: the message says so" || bad "wrong password: the message does not say so"
@@ -147,6 +150,7 @@ grep -q 'wrong on attempt 1 (length 12)' "$log" && ok "the wrong password reache
 screen ty | grep -q 'password accepted' && ok "Claude got the command's output" || bad "Claude did not get the output"
 screen ty | grep -q 'Sudo Authentication Required' && bad "the panel is still up" || ok "the panel is gone"
 screen ty | grep -E -q '^❯.keep-me' && ok "the draft typed before is back" || bad "the draft was not restored"
+[ "$(border ty)" != 214 ] && ok "the prompt border is back to its colour ($(border ty))" || bad "the prompt border is still amber"
 
 # 3. The prompt history. Here a prompt the field drops never reaches
 # history.jsonl, with or without the plugin's clean-up (checked by breaking

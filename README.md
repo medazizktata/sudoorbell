@@ -248,6 +248,16 @@ it.
   ❯ 🔒 •••••••
     🔒 sudo password · Enter sends it to sudo · Esc cancels
   ```
+
+  **Amber prompt border (optional).** A plugin can't recolour the prompt box's
+  border directly, but Claude Code reloads a custom theme's file while it
+  runs. So the plugin keeps a theme, `sudoorbell` (in `themes/` in Claude
+  Code's config folder, made like the theme you use), and turns its prompt
+  border amber while the field is open. Pick **sudoorbell** once in `/theme`
+  to get it (restart Claude Code first if that `themes` folder is new). Every
+  open session using the theme shows the amber border while a field is open,
+  and a border left on by a session that died is taken off when the next one
+  starts.
 - **Deny**, Esc, or no one to ask (`claude -p`): the command doesn't run, and
   Claude is told not to retry it. Anything typed into the question's free-text
   row also refuses, and is never shown to Claude, in case it was a password.
