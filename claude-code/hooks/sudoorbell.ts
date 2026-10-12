@@ -61,6 +61,14 @@ let bin = ''
 let runtime = ''
 
 export const register: Register = on => {
+  // Claude Code may write part of a session's prompt history only as the
+  // session ends, after the clean-up that follows a hand-over ran: take any
+  // such entry out when the next session starts.
+  on('session.start', async ($, e, next) => {
+    await scrubHistory($)
+    return next(e)
+  })
+
   on('plugin.register', async ($, e, next) => {
     if (e.name !== $.plugin.name && watches(e.uses.events)) {
       watchers.add(e.name)
