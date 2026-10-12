@@ -20,9 +20,9 @@ import type { Register } from 'claude-code'
 const APPROVE = 'Approve'
 const TYPE_HERE = 'Type password here'
 const DENY = 'Deny'
-// What the prompt box shows once anything is typed: always the same, so
-// neither the screen nor the prompt history it may land in tells the length.
-const SHOWN = '••••••••'
+// What the prompt box shows for each character typed; a prompt made only of
+// it is a submitted password field, taken out of the prompt history.
+const MASK = '•'
 // The rule `sudoorbell install --claude-deny` adds, and other spellings of it.
 const SUDO_RULE = /^Bash\(sudo(?:[ :].*)?\)$/
 // The events through which another mod could read the password: each edit of
@@ -50,7 +50,7 @@ let attempts = 0
 // back afterwards; and whether the box still shows a mask to clear.
 let draft: { text: string; cursor: number } | null = null
 let isBoxDirty = false
-// Enter put a prompt holding SHOWN into Claude Code's history: take it out.
+// Enter put a prompt of masks into Claude Code's history: take it out.
 let needsScrub = false
 // Whether the command sent through the request mode is still running, and
 // what it printed once it ended (to tell a sudo that gave up).
@@ -198,6 +198,14 @@ export const register: Register = on => {
     return request === null ? next(e) : { drop: 'sudoorbell: could not hand the password over; sudo will time out.' }
   })
 
+  // The hint line under the prompt says the box is the password field.
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    if (request === null) {
+      return next(e)
+    }
+    return next({ ...e, props: { ...e.props, hint: '🔒 sudo password · Enter sends it to sudo · Esc cancels' } })
+  })
+
   // The panel above the prompt while a request waits.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (request === null) {
@@ -212,7 +220,7 @@ export const register: Register = on => {
         Text({ bold: true, children: ['🔐 Sudo Authentication Required'] }),
         Text({ children: ['Run as root: ' + request.command] }),
         ...(note === '' ? [] : [Text({ color: 'yellow', children: [note] })]),
-        Text({ children: ['Password: type it in the prompt below (shown as ' + SHOWN + ', whatever its length).'] }),
+        Text({ children: ['Password: type it in the prompt below, shown as ' + MASK + ' per character.'] }),
         Text({ dimColor: true, children: ['Press Enter to submit, Escape to cancel. Enter with nothing typed denies.'] }),
         Text({ dimColor: true, italic: true, children: ['Your password goes to sudo only. It is never shown or sent to Claude.'] }),
       ],
@@ -331,7 +339,7 @@ async function refuse($, pid) {
 }
 
 // Takes out of Claude Code's prompt history the entries Enter left in the
-// field: their text is exactly SHOWN, never the password. Leaves the file
+// field: their text is masks only, never the password. Leaves the file
 // alone when it cannot be read whole (over the 4 MiB a mod may read).
 async function scrubHistory($) {
   try {
@@ -479,21 +487,23 @@ export function watches(patterns: readonly string[]): boolean {
   })
 }
 
-/** What the prompt box shows for the password typed so far. */
-export function shown(password: string): { text: string; cursor: number } {
-  return password === '' ? { text: '', cursor: 0 } : { text: SHOWN, cursor: SHOWN.length }
+/** What the prompt box shows for the password typed so far: a mask per character, painted as a password field. */
+export function shown(password: string): { text: string; cursor: number; decorations: { start: number; end: number; color: 'warning'; bold: true }[] } {
+  const text = MASK.repeat(password.length)
+  return { text, cursor: text.length, decorations: [{ start: 0, end: text.length, color: 'warning', bold: true }] }
 }
 
-/** A prompt history file's text without the lines whose prompt is exactly SHOWN. */
+/** A prompt history file's text without the lines whose prompt is masks only. */
 export function withoutShown(history: string): string {
+  const masks = new RegExp('^' + MASK + '+$')
   return history
     .split('\n')
     .filter(line => {
-      if (!line.includes(SHOWN)) {
+      if (!line.includes(MASK)) {
         return true
       }
       try {
-        return JSON.parse(line).display !== SHOWN
+        return !masks.test(JSON.parse(line).display)
       } catch {
         return true
       }

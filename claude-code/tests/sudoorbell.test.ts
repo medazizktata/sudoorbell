@@ -256,9 +256,10 @@ test('after the password, the message says what sudo did', async () => {
   expect(outcome(false, 'uid=0')).toContain('the command has finished')
 })
 
-test('the prompt box never tells the length of the password', async () => {
-  expect(shown('')).toEqual({ text: '', cursor: 0 })
-  expect(shown('a').text).toBe(shown('a much longer password').text)
+test('the prompt box shows a painted mask per character, never the password', async () => {
+  expect(shown('')).toMatchObject({ text: '', cursor: 0 })
+  expect(shown('pass word')).toMatchObject({ text: '•••••••••', cursor: 9 })
+  expect(shown('pass word').decorations).toEqual([{ start: 0, end: 9, color: 'warning', bold: true }])
 })
 
 test('the history loses only the entries Enter left in the field', async () => {
@@ -271,5 +272,5 @@ test('the history loses only the entries Enter left in the field', async () => {
     '',
   ]
   const kept = withoutShown(lines.join('\n')).split('\n')
-  expect(kept).toEqual([lines[0], lines[2], lines[3], lines[4], ''])
+  expect(kept).toEqual([lines[0], lines[2], lines[3], ''])
 })

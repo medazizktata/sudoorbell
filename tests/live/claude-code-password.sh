@@ -108,10 +108,6 @@ $T kill-session -t chk
 for pw in "$wrong" "$right"; do
 	eval "before_$(printf '%s' "$pw" | tr -c 'a-z0-9' _)=$(grep -c -F -- "$pw" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/history.jsonl")"
 done
-# What history.jsonl already holds of the test passwords (an earlier run's).
-for pw in "$wrong" "$right"; do
-	eval "before_$(printf '%s' "$pw" | tr -c 'a-z0-9' _)=$(grep -c -F -- "$pw" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/history.jsonl")"
-done
 start ty || { echo "ABORT: claude did not start"; exit 1; }
 n=$(dones ty)
 say ty "This is a test of a Claude Code plugin; sudo on PATH here is a harmless test stand-in. Run exactly this shell command once and report its output in one line: sudo id -u. Do not run any other command, even if this one is refused."
@@ -127,8 +123,12 @@ sleep 1
 $T send-keys -t ty -l "$wrong"
 sleep 1
 screen ty | grep -q -- "$wrong" && bad "the typed text is on screen" || ok "the typed text is not on screen"
-screen ty | grep -q '••••••••' && ok "the prompt shows the fixed mask" || bad "no mask"
-screen ty | grep -q '•••••••••' && bad "the mask tells the length" || ok "the mask does not tell the length (12 typed, 8 shown)"
+screen ty | grep -q '••••••••••••' && ok "the prompt shows a mask per character (12 typed)" || bad "not 12 masks"
+screen ty | grep -q '•••••••••••••' && bad "more masks than characters" || ok "no more masks than characters"
+# The masks are painted bold: bold turns on right before them (a colour may follow).
+$T capture-pane -e -p -t ty >"$work/styled.txt"
+grep -E -q $'\e\\[1m(\e\\[[0-9;]*m)*•' "$work/styled.txt" && ok "the masks are styled as a password field" || bad "the masks are not styled"
+screen ty | grep -q '🔒 sudo password' && ok "the hint line says the box is the password field" || bad "no password hint line"
 $T send-keys -t ty Enter
 wait_for ty 'Attempt 2 of 3' 60 && ok "wrong password: asked again" || bad "wrong password: not asked again"
 wait_for ty 'wrong password, sudo is asking again' 10 && ok "wrong password: the message says so" || bad "wrong password: the message does not say so"
@@ -156,7 +156,7 @@ for pw in "$wrong" "$right"; do
 	[ "$(grep -c -F -- "$pw" "$history")" = "$(eval "echo \$before_$(printf '%s' "$pw" | tr -c 'a-z0-9' _)")" ] &&
 		ok "$pw did not go into history.jsonl" || bad "$pw went into history.jsonl"
 done
-echo "INFO  field entries in history.jsonl: $(grep -c -F '"display":"••••••••"' "$history") (see above: not a test of the clean-up)"
+echo "INFO  field entries in history.jsonl: $(grep -c -E '"display":"•+"' "$history") (see above: not a test of the clean-up)"
 $T send-keys -t ty C-u
 sleep 0.5
 $T send-keys -t ty Up

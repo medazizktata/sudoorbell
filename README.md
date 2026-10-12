@@ -226,7 +226,8 @@ it.
   deny rule for that one call, and sudoorbell then asks for Touch ID or your
   password in its window. The password never passes through Claude Code.
 - **Type password here**: a panel opens above the prompt, and Claude's prompt
-  box becomes the password field, showing `•` for each character typed.
+  box becomes the password field: one bold, amber `•` per character typed,
+  and the hint line under it reads `🔒 sudo password`.
   Enter hands the password to that one sudo request, through the standard
   input of `sudoorbell approve --pid N --stdin`; Enter with nothing typed
   denies; Esc cancels the command. A wrong password asks again, up to sudo's
@@ -236,13 +237,15 @@ it.
   ╭──────────────────────────────────────────────────────────────╮
   │ 🔐 Sudo Authentication Required                               │
   │ Run as root: sudo -A id -u                                    │
-  │ Password: type it in the prompt below (shown as •).           │
+  │ Password: type it in the prompt below, shown as • per         │
+  │ character.                                                    │
   │ Press Enter to submit, Escape to cancel. Enter with nothing   │
   │ typed denies.                                                 │
   │ Your password goes to sudo only. It is never shown or sent to │
   │ Claude.                                                       │
   ╰──────────────────────────────────────────────────────────────╯
   ❯ •••••••
+    🔒 sudo password · Enter sends it to sudo · Esc cancels
   ```
 - **Deny**, Esc, or no one to ask (`claude -p`): the command doesn't run, and
   Claude is told not to retry it. Anything typed into the question's free-text
@@ -271,6 +274,9 @@ don't, so the field comes with these guards:
   Claude as a message.)
 - **Records.** Tested by searching for the test passwords afterwards: neither
   was in the session's transcript nor in its debug log (`claude --debug`).
+  Claude Code can keep the submitted field, a row of `•` as long as the
+  password, in its prompt history (`history.jsonl`, the Up arrow); the plugin
+  takes such entries out after each hand-over and when a session starts.
 
 Every `sudo` the plugin did not approve still meets the deny rule, and so does
 every `sudo` when the plugin isn't loaded. The plugin also recognises

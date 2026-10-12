@@ -17,7 +17,8 @@ What changed in each release of sudoorbell. The format follows
   still meets the rule, as does every `sudo` when the plugin isn't loaded.
 - **Password field inside Claude Code** ("Type password here"): a panel above
   the prompt, like Cursor's "Sudo Authentication Required" box, and Claude's
-  prompt box becomes the password field, showing `•` per character. Enter
+  prompt box becomes the password field, showing a bold amber `•` per
+  character, with `🔒 sudo password` in the hint line under it. Enter
   hands the password to that one sudo request through standard input, never
   to Claude; Esc cancels; the draft that was in the box comes back. Works at
   any terminal width. Offered only while no other enabled mod could read it
@@ -43,10 +44,9 @@ What changed in each release of sudoorbell. The format follows
 
 ### Fixed
 
-- The password field showed one `•` per character, and Claude Code kept each
-  submitted field in its prompt history, so the history told the password's
-  length. The box now shows a fixed `••••••••`, and after a hand-over the
-  plugin takes those entries out of `history.jsonl`, and again when a
+- Claude Code kept each submitted password field, a row of `•` as long as
+  the password, in its prompt history (`history.jsonl`, the Up arrow). The
+  plugin now takes those entries out after a hand-over, and again when a
   session starts, for any written after that.
 - After Enter in the password field, the message said the password went to
   sudo even when it was wrong. It now waits for sudo's answer: "wrong
