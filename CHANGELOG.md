@@ -43,6 +43,10 @@ What changed in each release of sudoorbell. The format follows
 
 ### Fixed
 
+- The password field showed one `•` per character, and Claude Code kept each
+  submitted field in its prompt history, so the history told the password's
+  length. The box now shows a fixed `••••••••`, and after a hand-over the
+  plugin takes those entries out of `history.jsonl`.
 - After Enter in the password field, the message said the password went to
   sudo even when it was wrong. It now waits for sudo's answer: "wrong
   password, sudo is asking again (attempt 2 of 3)", or that it was handed to

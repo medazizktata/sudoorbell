@@ -108,6 +108,10 @@ $T kill-session -t chk
 for pw in "$wrong" "$right"; do
 	eval "before_$(printf '%s' "$pw" | tr -c 'a-z0-9' _)=$(grep -c -F -- "$pw" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/history.jsonl")"
 done
+# What history.jsonl already holds of the test passwords (an earlier run's).
+for pw in "$wrong" "$right"; do
+	eval "before_$(printf '%s' "$pw" | tr -c 'a-z0-9' _)=$(grep -c -F -- "$pw" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/history.jsonl")"
+done
 start ty || { echo "ABORT: claude did not start"; exit 1; }
 n=$(dones ty)
 say ty "This is a test of a Claude Code plugin; sudo on PATH here is a harmless test stand-in. Run exactly this shell command once and report its output in one line: sudo id -u. Do not run any other command, even if this one is refused."
@@ -142,15 +146,17 @@ screen ty | grep -q 'password accepted' && ok "Claude got the command's output" 
 screen ty | grep -q 'Sudo Authentication Required' && bad "the panel is still up" || ok "the panel is gone"
 screen ty | grep -E -q '^❯.keep-me' && ok "the draft typed before is back" || bad "the draft was not restored"
 
-# 3. The prompt history: nothing from the field in the file, nor on Up.
+# 3. The prompt history. Here a prompt the field drops never reaches
+# history.jsonl, with or without the plugin's clean-up (checked by breaking
+# the clean-up), so these lines can only show that nothing leaked, not that
+# the clean-up works; in the user's own session such entries did appear.
 history=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/history.jsonl
 sleep 2
-n_shown=$(grep -c -F '"display":"••••••••"' "$history")
-[ "$n_shown" = 0 ] && ok "no field entry left in history.jsonl" || bad "history.jsonl still holds $n_shown field entries"
 for pw in "$wrong" "$right"; do
 	[ "$(grep -c -F -- "$pw" "$history")" = "$(eval "echo \$before_$(printf '%s' "$pw" | tr -c 'a-z0-9' _)")" ] &&
 		ok "$pw did not go into history.jsonl" || bad "$pw went into history.jsonl"
 done
+echo "INFO  field entries in history.jsonl: $(grep -c -F '"display":"••••••••"' "$history") (see above: not a test of the clean-up)"
 $T send-keys -t ty C-u
 sleep 0.5
 $T send-keys -t ty Up
