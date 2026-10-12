@@ -202,11 +202,25 @@ it.
 - **Approve**: the command runs through Claude Code's own Bash tool, past the
   deny rule for that one call, and sudoorbell then asks for Touch ID or your
   password in its window. The password never passes through Claude Code.
-- **Type password here**: a pane opens in Claude Code with a password field.
-  Typing shows nothing, as in a terminal (Backspace works, Clear starts over),
-  and Enter hands the password to that one sudo request, through the standard
-  input of `sudoorbell approve --pid N --stdin`. A wrong password opens the
-  pane again, up to sudo's three tries.
+- **Type password here**: a panel opens above the prompt, and Claude's prompt
+  box becomes the password field, showing `•` for each character typed.
+  Enter hands the password to that one sudo request, through the standard
+  input of `sudoorbell approve --pid N --stdin`; Enter with nothing typed
+  denies; Esc cancels the command. A wrong password asks again, up to sudo's
+  three tries. Whatever you had typed in the prompt before comes back after.
+
+  ```
+  ╭──────────────────────────────────────────────────────────────╮
+  │ 🔐 Sudo Authentication Required                               │
+  │ Run as root: sudo -A id -u                                    │
+  │ Password: type it in the prompt below (shown as •).           │
+  │ Press Enter to submit, Escape to cancel. Enter with nothing   │
+  │ typed denies.                                                 │
+  │ Your password goes to sudo only. It is never shown or sent to │
+  │ Claude.                                                       │
+  ╰──────────────────────────────────────────────────────────────╯
+  ❯ •••••••
+  ```
 - **Deny**, Esc, or no one to ask (`claude -p`): the command doesn't run, and
   Claude is told not to retry it. Anything typed into the question's free-text
   row also refuses, and is never shown to Claude, in case it was a password.
@@ -217,20 +231,21 @@ it.
 Typing a password inside Claude Code has risks that Touch ID and the window
 don't, so the field comes with these guards:
 
-- **Other mods.** Any mod can subscribe to what is typed into another mod's
-  field (`ui.input`), and to the processes a mod starts with their input
+- **Other mods.** Any mod can subscribe to each edit of the prompt box
+  (`prompt.edit`), and to the processes a mod starts with their input
   (`process.run`). The field is only offered while no other enabled mod hooks
-  either, or `prompt.edit`, or a pattern covering them such as `*`. The plugin
+  either, or a pattern covering them such as `*`. The plugin
   reads every enabled plugin's hooks module, as Claude Code does, and watches
   each mod that loads later. Mods built into Claude Code are trusted. When the
   field is off, the question says which mod is the reason.
-- **Mods after this one.** The plugin's own `ui.input` hook takes each
-  keystroke and passes nothing on.
-- **The wrong place.** While a request waits, anything typed into Claude's own
-  prompt is thrown away: it never shows, is never queued, and never reaches
-  Claude. (In testing, before this guard, a password typed while the prompt
-  had the keyboard was sent to Claude as a message.) The pane also takes the
-  keyboard again for every attempt.
+- **Mods after this one.** The plugin's own `prompt.edit` hook takes each
+  keystroke and passes nothing on, and its `prompt.submit` hook keeps Enter
+  from sending anything: the prompt box only ever holds `•`.
+- **Any terminal width.** No pane is needed, so it works in a narrow window
+  too. (An earlier version used a pane, which Claude Code only places in a
+  terminal at least 144 columns wide; in a narrower one the field never
+  appeared, and a password typed into the prompt instead had once reached
+  Claude as a message.)
 - **Records.** Tested by searching for the test passwords afterwards: neither
   was in the session's transcript nor in its debug log (`claude --debug`).
 
@@ -259,14 +274,14 @@ in force and auto mode on:
   answer, `sudo` by full path, `claude -p`, and another deny rule in the same
   command all behave as above; with the override switched off, the deny rule
   refuses an approved call.
-- With a stand-in that asks through the same request mode as the real helper:
-  a wrong and then a right password typed in the pane reach sudo whole, the
-  second as attempt 2, and neither shows on screen.
+- With a stand-in that asks through the same request mode as the real helper,
+  in a 102-column terminal: a wrong and then a right password typed into the
+  prompt reach sudo whole, the second as attempt 2; the prompt shows only `•`;
+  the draft typed before comes back after.
 - With real sudo: Approve, then Apple's prompt, ran the command.
 
-Not yet tested: the field with real sudo, the prompt guard catching typing
-(the keyboard stayed in the field in every run), and a subagent's sudo (auto
-mode blocked the subagent from starting).
+Not yet tested: the field with real sudo, and a subagent's sudo (auto mode
+blocked the subagent from starting).
 
 ## Claude Code mode: the password asked inside Claude Code
 

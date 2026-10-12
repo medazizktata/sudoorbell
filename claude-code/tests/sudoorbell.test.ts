@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { choices, eventsIn, question, runsSudo, settingIn, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
+import { choices, edited, eventsIn, question, runsSudo, settingIn, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
 
 // Stands for Claude Code beneath the mod: answers the question with `answer`
 // (or dismisses it when `answer` is null), runs Bash as a stub, and records
@@ -145,8 +145,8 @@ test('the password field is offered when no other mod could read it', async ($, 
   expect(seen.offered[0]).toEqual(['Approve', 'Type password here', 'Deny'])
 })
 
-test('the password field is withheld while another mod hooks ui.input', async ($, on) => {
-  const seen = plugins(on, { keylogger: "export function register(on) { on('ui.input', h) }" })
+test('the password field is withheld while another mod hooks prompt.edit', async ($, on) => {
+  const seen = plugins(on, { keylogger: "export function register(on) { on('prompt.edit', h) }" })
   await $.tool.call({ tool: 'Bash', command: 'sudo id -u' })
   expect(seen.offered[0]).toEqual(['Approve', 'Deny'])
   expect(seen.asked[0]).toContain('keylogger could read it')
@@ -170,9 +170,10 @@ test('typing "Type password here" when it was not offered refuses', async ($, on
 })
 
 test('which event patterns could read a password', async () => {
-  expect(watches(['ui.input'])).toBe(true)
-  expect(watches(['ui.*'])).toBe(true)
+  expect(watches(['prompt.edit'])).toBe(true)
+  expect(watches(['prompt.*'])).toBe(true)
   expect(watches(['process.run'])).toBe(true)
+  expect(watches(['ui.input', 'prompt.submit'])).toBe(false)
   expect(watches(['*'])).toBe(true)
   expect(watches(['!tool.describe'])).toBe(true)
   expect(watches(['ui.render', 'tool.call', 'ui.press', 'classic.*'])).toBe(false)
@@ -212,4 +213,14 @@ test('with claude_password inside, Approve is not an answer', async ($, on) => {
   const out = await $.tool.call({ tool: 'Bash', command: 'sudo id -u' })
   expect(offered[0]).toEqual(['Type password here', 'Deny'])
   expect(out.deny).toContain('did not approve')
+})
+
+test('typing into the prompt box builds the password, which only ever shows as masks', async () => {
+  let pw = ''
+  for (const ch of 'hunter2') pw = edited(pw, 0, ch)
+  expect(pw).toBe('hunter2')
+  expect(edited(pw, 1, '')).toBe('hunter')        // Backspace
+  expect(edited(pw, 99, '')).toBe('')             // a kill of the whole line
+  expect(edited('ab', 0, 'cd\nef')).toBe('abcdef') // a paste, line break dropped
+  expect(edited('abc', 1, 'X')).toBe('abX')       // a replacement
 })

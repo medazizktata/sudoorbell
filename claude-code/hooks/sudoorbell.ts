@@ -6,10 +6,11 @@ import type { Register } from 'claude-code'
 // - Approve: it runs through Claude Code's own Bash tool, where sudoorbell's
 //   shell integration gets the password: Touch ID, the sudoorbell window, or
 //   a terminal request. The password never passes through Claude Code.
-// - Type password here: a pane takes the password, hidden as in a terminal,
-//   and hands it to that one sudo request through `sudoorbell approve
-//   --stdin`. Offered only while no other mod hooks the events that would let
-//   it read the typing or the hand-over (ui.input, process.run).
+// - Type password here: a panel above the prompt asks for the password, and
+//   Claude's own prompt box takes it, masked; Enter hands it to that one sudo
+//   request through `sudoorbell approve --stdin`, Esc cancels. Offered only
+//   while no other mod hooks the events that would let it read the typing or
+//   the hand-over (prompt.edit, process.run).
 // - Deny, or no answer: it does not run.
 //
 // Approval is for one call. The Bash(sudo:*) deny rule that
@@ -19,15 +20,12 @@ import type { Register } from 'claude-code'
 const APPROVE = 'Approve'
 const TYPE_HERE = 'Type password here'
 const DENY = 'Deny'
-const PANE = 'sudoorbell-password'
-const FIELD = 'sudoorbell-password-field'
+const MASK = '•'
 // The rule `sudoorbell install --claude-deny` adds, and other spellings of it.
 const SUDO_RULE = /^Bash\(sudo(?:[ :].*)?\)$/
-// The events through which another mod could read the password: what is
-// typed into the field, and the process the password is handed to.
-// prompt.edit too: while a request waits, sudoorbell discards what is typed
-// into Claude's prompt, but a mod before it in the chain would see it first.
-const WATCHED = ['ui.input', 'process.run', 'prompt.edit']
+// The events through which another mod could read the password: each edit of
+// the prompt box, where it is typed, and the process it is handed to.
+const WATCHED = ['prompt.edit', 'process.run']
 const REFUSED = 'The user did not approve this sudo command, so it did not run. Do not retry it unless the user asks you to.'
 
 // The calls you approved, by tool_use_id, until they finish.
@@ -39,19 +37,17 @@ const approved = new Set<string>()
 const watchers = new Set<string>()
 let isScanned = false
 
-// The sudo request the pane is answering, and what has been typed for it.
-// The typed text lives here only, and only until it is handed over.
+// The sudo request waiting for a password, and what has been typed for it.
+// The typed text lives here only, and only until it is handed over; the
+// prompt box shows one mask character per character typed.
 let request: { pid: string; command: string } | null = null
 let typed = ''
-// What the field holds since it was last drawn. It is drawn with one of two
-// invisible characters, alternating, because a redraw with an unchanged value
-// leaves what was typed on screen; a changed one clears it. Deleting that
-// character is a Backspace.
-let fieldText = ''
-let flip = false
 let note = ''
-let isPromptBlocked = false
 let attempts = 0
+// The draft that was in the prompt box when a request took it over, given
+// back afterwards; and whether the box still shows a mask to clear.
+let draft: { text: string; cursor: number } | null = null
+let isBoxDirty = false
 // How to reach sudoorbell, set when a request is served.
 let bin = ''
 let runtime = ''
@@ -138,89 +134,56 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // While a request waits for a password, what is typed into Claude's prompt
-  // is thrown away: it never shows, is never queued, never reaches Claude or
-  // the transcript. A password typed there by mistake goes nowhere.
+  // While a request waits, the prompt box is the password field: each edit
+  // goes into the password, never into the box, which shows only masks. So
+  // nothing typed then is shown, queued, or sent to Claude.
   on('prompt.edit', ($, e, next) => {
     if (request === null) {
       return next(e)
     }
-    if (!isPromptBlocked) {
-      isPromptBlocked = true
-      $.ui.invalidate('ui.render')
-    }
-    return { text: e.text, cursor: e.cursor }
+    typed = edited(typed, e.end - e.start, e.inputText)
+    isBoxDirty = true
+    return { text: MASK.repeat(typed.length), cursor: typed.length }
   }).catch(($, e, next) => {
-    return request === null ? next(e) : { text: e.text, cursor: e.cursor }
+    return request === null ? next(e) : { text: MASK.repeat(typed.length), cursor: typed.length }
   })
 
-  // The field's keystrokes: kept here and passed on to no one, so a mod
-  // after this one in the chain never sees them, and the field is drawn
-  // empty again at once, as a terminal shows nothing while you type.
-  on('ui.input', { plugin: 'sudoorbell', element: FIELD }, async ($, e) => {
-    take(String(e.value ?? ''))
-    if (e.kind === 'submit' && request !== null) {
-      await handOver($, request.pid, typed)
-    }
-    $.ui.invalidate('ui.render')
-    return { element: FIELD, value: '' }
-  })
-
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+  // Enter: the password goes to sudo, and the prompt never enters. Enter with
+  // nothing typed denies.
+  on('prompt.submit', async ($, e, next) => {
     if (request === null) {
       return next(e)
     }
-    // Drawn with a value unlike the last one, so whatever the field held is
-    // gone from the screen.
-    flip = !flip
-    fieldText = flip ? '\u200b' : '\u200c'
-    const { Box, Text, Input, Button } = $.ui.resolve(e)
     const pid = request.pid
+    const password = typed
+    if (password === '') {
+      await refuse($, pid)
+      return { drop: 'sudoorbell: nothing was typed, so sudo was denied.' }
+    }
+    await handOver($, pid, password)
+    return { drop: 'sudoorbell: your password went to sudo. Claude never saw it.' }
+  }).catch(async ($, e, next) => {
+    // Never let a prompt typed while sudo waits through to Claude.
+    return request === null ? next(e) : { drop: 'sudoorbell: could not hand the password over; sudo will time out.' }
+  })
+
+  // The panel above the prompt while a request waits.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (request === null) {
+      return next(e)
+    }
+    const { Box, Text } = $.ui.resolve(e)
     return Box({
       flexDirection: 'column',
+      borderStyle: 'round',
+      paddingX: 1,
       children: [
+        Text({ bold: true, children: ['🔐 Sudo Authentication Required'] }),
         Text({ children: ['Run as root: ' + request.command] }),
-        ...(note === '' ? [] : [Text({ children: [note] })]),
-        ...(isPromptBlocked
-          ? [Text({ children: ["Typing in Claude's prompt is blocked and thrown away while sudo waits. Type here."] })]
-          : []),
-        Text({
-          dimColor: true,
-          children: [
-            typed === ''
-              ? 'Typing is hidden, as in a terminal. Enter hands it to sudo; Claude never sees it.'
-              : 'Typing is hidden. Enter hands it to sudo; Clear starts over.',
-          ],
-        }),
-        Input({
-          key: FIELD,
-          label: 'Password',
-          value: fieldText,
-          autoFocus: true,
-          submitLabel: 'to sudo',
-          onSubmit: () => {},
-        }),
-        Box({
-          flexDirection: 'row',
-          columnGap: 2,
-          children: [
-            Button({
-              key: 'sudoorbell-clear',
-              label: 'Clear',
-              onPress: () => {
-                typed = ''
-                $.ui.invalidate('ui.render')
-              },
-            }),
-            Button({
-              key: 'sudoorbell-deny',
-              label: 'Deny',
-              onPress: async () => {
-                await refuse($, pid)
-              },
-            }),
-          ],
-        }),
+        ...(note === '' ? [] : [Text({ color: 'yellow', children: [note] })]),
+        Text({ children: ['Password: type it in the prompt below (shown as ' + MASK + ').'] }),
+        Text({ dimColor: true, children: ['Press Enter to submit, Escape to cancel. Enter with nothing typed denies.'] }),
+        Text({ dimColor: true, italic: true, children: ['Your password goes to sudo only. It is never shown or sent to Claude.'] }),
       ],
     })
   })
@@ -243,16 +206,34 @@ async function typeHere($, e, next) {
   try {
     while (!isDone && !next.signal.aborted) {
       if (request === null) {
+        if (isBoxDirty) {
+          // The box still shows the masks a dropped prompt put back.
+          isBoxDirty = false
+          await $.prompt.fill({ text: '' })
+        }
         await serveNext($)
       }
       await $.process.run(['sleep', '0.25'], { timeoutMs: 5000 })
     }
   } finally {
+    if (request !== null) {
+      // Esc, or the command ended: the waiting sudo gets a no.
+      try {
+        await refuse($, request.pid)
+      } catch {
+        // its request is gone already
+      }
+    }
     typed = ''
     request = null
     note = ''
-    isPromptBlocked = false
-    await closePane($)
+    $.ui.invalidate('ui.render')
+    if (draft !== null) {
+      const back = draft
+      draft = null
+      isBoxDirty = false
+      await $.prompt.fill({ text: back.text })
+    }
   }
   return await ran
 }
@@ -266,25 +247,15 @@ async function serveNext($) {
   }
   const tab = line.indexOf('\t')
   attempts += 1
-  request = { pid: line.slice(0, tab), command: line.slice(tab + 1) }
+  if (draft === null) {
+    // Keep what was in the prompt box, to give it back afterwards.
+    draft = await $.prompt.read()
+  }
   typed = ''
-  note = attempts > 1 ? 'Wrong password. Attempt ' + attempts + '.' : ''
-  await $.ui.open({ id: PANE, title: 'sudoorbell', focus: true })
+  note = attempts > 1 ? 'Sorry, try again. Attempt ' + attempts + ' of 3.' : ''
+  request = { pid: line.slice(0, tab), command: line.slice(tab + 1) }
+  await $.prompt.fill({ text: '' })
   $.ui.invalidate('ui.render')
-  // The keyboard goes to the field, not Claude's prompt.
-  try {
-    await $.ui.focus({ requestId: PANE, key: FIELD })
-  } catch {
-    // the prompt guard still keeps typing away from Claude
-  }
-}
-
-async function closePane($) {
-  try {
-    await $.ui.close({ id: PANE })
-  } catch {
-    // the pane is already gone
-  }
 }
 
 // Hands the typed password to the sudo request of process `pid`, on the
@@ -293,8 +264,8 @@ async function closePane($) {
 async function handOver($, pid, password) {
   typed = ''
   request = null
-  isPromptBlocked = false
-  await closePane($)
+  isBoxDirty = true
+  $.ui.invalidate('ui.render')
   try {
     await $.process.run([bin, 'approve', '--pid', pid, '--stdin'], {
       env: { SUDOORBELL_RUNTIME_DIR: runtime },
@@ -309,8 +280,8 @@ async function handOver($, pid, password) {
 async function refuse($, pid) {
   typed = ''
   request = null
-  isPromptBlocked = false
-  await closePane($)
+  isBoxDirty = true
+  $.ui.invalidate('ui.render')
   await $.process.run([bin, 'approve', '--pid', pid, '--deny'], { env: { SUDOORBELL_RUNTIME_DIR: runtime }, timeoutMs: 10000 })
 }
 
@@ -426,16 +397,15 @@ export function watches(patterns: readonly string[]): boolean {
   })
 }
 
-/** Takes the field's text into `typed`, the field having been empty when last drawn. */
-function take(value: string) {
-  if (value.startsWith(fieldText)) {
-    typed += value.slice(fieldText.length)
-  } else if (fieldText.startsWith(value)) {
-    typed = typed.slice(0, Math.max(0, typed.length - (fieldText.length - value.length)))
-  } else {
-    typed += value
-  }
-  fieldText = value
+/**
+ * The password after one edit of the prompt box: `removed` characters taken
+ * off the end (Backspace, a kill), then `inserted` added (typing, a paste;
+ * line breaks dropped). The box only ever holds masks, so where in it the
+ * edit falls does not matter.
+ */
+export function edited(password: string, removed: number, inserted: string): string {
+  const kept = removed > 0 ? password.slice(0, Math.max(0, password.length - removed)) : password
+  return kept + inserted.replace(/[\r\n]/g, '')
 }
 
 /**
