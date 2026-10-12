@@ -28,6 +28,10 @@ assert_eq "rules: off when clients names others only" "$(on_off HOME="$home" SUD
 assert_eq "rules: on when clients names it" "$(on_off HOME="$home" SUDOORBELL_CLIENTS=claude,cursor-agent)" on
 assert_eq "rules: clients_off wins over clients" "$(on_off HOME="$home" SUDOORBELL_CLIENTS=cursor-agent SUDOORBELL_CLIENTS_OFF=cursor-agent)" off
 assert_eq "rules: clients all" "$(on_off HOME="$home" SUDOORBELL_CLIENTS=all)" on
+NAME=''
+assert_eq "rules: a program with no name is on by default" "$(on_off HOME="$home")" on
+assert_eq "rules: a program with no name, with others off" "$(on_off HOME="$home" SUDOORBELL_CLIENTS_OFF=cursor-agent)" on
+assert_eq "rules: a program with no name, with clients a list" "$(on_off HOME="$home" SUDOORBELL_CLIENTS=claude)" off
 
 # `sudoorbell client`
 file=$home/.config/sudoorbell/config

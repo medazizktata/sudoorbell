@@ -105,6 +105,15 @@ assert_eq "approve --stdin: the password reaches sudo" "$(cat "$work/out")" stdi
 assert_eq "approve --stdin: success" "$(cat "$work/status")" 0
 assert_eq "approve --pending: nothing left" "$("$root/bin/sudoorbell" approve --pending)" ""
 
+# Answered by a program (the Claude Code plugin): no pointer to a terminal.
+(SUDOORBELL_ANSWERED_IN='Claude Code' sd_broker "$(sd_message 'sudo id' claude 1)" terminal $pid >/dev/null 2>"$work/err") &
+broker=$!
+wait_for "$dir/fifo.$pid"
+printf 'D\n' >"$dir/fifo.$pid"
+wait $broker
+assert_contains "answered in a program: says where" "$(cat "$work/err")" "waiting for the password in Claude Code"
+assert_not_contains "answered in a program: no pointer to a terminal" "$(cat "$work/err")" "sudoorbell approve"
+
 # The prompt never leaves the password in a plain file when the request has
 # gone: the pipe path is checked before writing.
 printf 'msg\n' >"$work/req"

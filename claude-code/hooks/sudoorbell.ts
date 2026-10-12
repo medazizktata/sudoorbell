@@ -48,6 +48,8 @@ let attempts = 0
 // back afterwards; and whether the box still shows a mask to clear.
 let draft: { text: string; cursor: number } | null = null
 let isBoxDirty = false
+// Whether the command sent through the request mode is still running.
+let isRunning = false
 // How to reach sudoorbell, set when a request is served.
 let bin = ''
 let runtime = ''
@@ -165,8 +167,21 @@ export const register: Register = on => {
       await refuse($, pid)
       return { drop: 'sudoorbell: nothing was typed, so sudo was denied.' }
     }
+    // sudo checks it now: a wrong one makes it ask again within a few
+    // seconds (a new attempt); a right one lets the command go on.
+    const before = attempts
     await handOver($, pid, password)
-    return { drop: 'sudoorbell: your password went to sudo. Claude never saw it.' }
+    for (let i = 0; i < 20 && attempts === before && isRunning; i += 1) {
+      await $.process.run(['sleep', '0.25'], { timeoutMs: 5000 })
+    }
+    if (attempts > before) {
+      return { drop: `sudoorbell: wrong password, sudo is asking again (attempt ${attempts} of 3). Claude never saw it.` }
+    }
+    return {
+      drop: isRunning
+        ? 'sudoorbell: password handed to sudo; the command is running. Claude never saw it.'
+        : 'sudoorbell: password handed to sudo, and the command has finished. Claude never saw it.',
+    }
   }).catch(async ($, e, next) => {
     // Never let a prompt typed while sudo waits through to Claude.
     return request === null ? next(e) : { drop: 'sudoorbell: could not hand the password over; sudo will time out.' }
@@ -204,12 +219,12 @@ async function typeHere($, e, next) {
   }
   runtime = (await $.env.get('TMPDIR')) ?? '/tmp'
   attempts = 0
-  let isDone = false
+  isRunning = true
   const ran = next({ ...e, command: viaRequest(String(e.command), runtime) }).finally(() => {
-    isDone = true
+    isRunning = false
   })
   try {
-    while (!isDone && !next.signal.aborted) {
+    while (isRunning && !next.signal.aborted) {
       if (request === null) {
         if (isBoxDirty) {
           // The box still shows the masks a dropped prompt put back.
@@ -428,7 +443,7 @@ export function edited(password: string, removed: number, inserted: string): str
  * ends agree on. A subshell, so nothing it sets outlives the command.
  */
 export function viaRequest(command: string, runtimeDir: string): string {
-  return `(export SUDOORBELL_BACKEND=terminal SUDOORBELL_TOUCH_ID=off SUDOORBELL_NOTIFY=0 SUDOORBELL_RUNTIME_DIR=${quote(runtimeDir)}; ${command}\n)`
+  return `(export SUDOORBELL_BACKEND=terminal SUDOORBELL_TOUCH_ID=off SUDOORBELL_NOTIFY=0 SUDOORBELL_ANSWERED_IN='Claude Code' SUDOORBELL_RUNTIME_DIR=${quote(runtimeDir)}; ${command}\n)`
 }
 
 function quote(text: string): string {

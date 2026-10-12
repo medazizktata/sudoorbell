@@ -26,7 +26,8 @@ if sd_parent_is_sudo $$; then not_ok "this test shell is not taken for sudo"; el
 
 # A process merely named sudo, not running as root, is not sudo either.
 fake=$(scratch)/sudo
-cp "$(command -v sleep)" "$fake"
+# A symlink, not a copy: macOS kills a copied system binary run from elsewhere.
+ln -s "$(command -v sleep)" "$fake"
 "$fake" 30 &
 named=$!
 sleep 1

@@ -453,6 +453,7 @@ sh tests/e2e/linux/run.sh    # end to end in Docker: real sudo; zenity on Xvfb, 
 sh tests/e2e/minimal/run.sh  # bare images: Debian slim, Alpine/BusyBox, sudo-rs, hidepid
 python tests/clients/sdk_client.py  # the MCP server under the official MCP SDK client (pip install mcp)
 claude plugin test claude-code      # the Claude Code plugin: no session, no sign-in
+bash tests/live/claude-code-password.sh  # the plugin's password field in a real Claude Code session (tmux, a stand-in sudo)
 claude plugin validate .            # the plugin and its marketplace, as Claude Code reads them
 ```
 

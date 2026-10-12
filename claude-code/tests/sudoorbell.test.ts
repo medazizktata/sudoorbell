@@ -182,7 +182,7 @@ test('which event patterns could read a password', async () => {
 
 test('the command is sent to the waiting-request mode, inside a subshell', async () => {
   const c = viaRequest('sudo id -u # a comment', "/tmp/it's")
-  expect(c.startsWith('(export SUDOORBELL_BACKEND=terminal SUDOORBELL_TOUCH_ID=off SUDOORBELL_NOTIFY=0 ')).toBe(true)
+  expect(c.startsWith("(export SUDOORBELL_BACKEND=terminal SUDOORBELL_TOUCH_ID=off SUDOORBELL_NOTIFY=0 SUDOORBELL_ANSWERED_IN='Claude Code' ")).toBe(true)
   expect(c).toContain("SUDOORBELL_RUNTIME_DIR='/tmp/it'\\''s'")
   expect(c.endsWith('sudo id -u # a comment\n)')).toBe(true)
 })

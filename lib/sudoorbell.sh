@@ -161,10 +161,15 @@ sd_client_name() {
 # Is sudoorbell on for client $1? Off when `clients_off` lists it, or when
 # `clients` lists others only. On for everything by default.
 sd_client_enabled() {
-	off=${SUDOORBELL_CLIENTS_OFF:-$(sd_config clients_off)}
-	case ",$off," in *",$1,"*) return 1 ;; esac
+	# A program with no name (nothing above sudo but shells, as under
+	# `docker exec`) is one no list names: only `clients` can leave it out.
+	if [ -n "$1" ]; then
+		off=${SUDOORBELL_CLIENTS_OFF:-$(sd_config clients_off)}
+		case ",$off," in *",$1,"*) return 1 ;; esac
+	fi
 	only=${SUDOORBELL_CLIENTS:-$(sd_config clients)}
 	case $only in '' | all) return 0 ;; esac
+	[ -n "$1" ] || return 1
 	case ",$only," in *",$1,"*) return 0 ;; esac
 	return 1
 }
@@ -496,8 +501,13 @@ sd_broker() {
 	else
 		sd_notify_ttys "sudoorbell: a program wants to run as root: $command -- answer with: sudoorbell approve"
 	fi
-	sd_err "waiting for approval to run as root: $command"
-	sd_err "answer in any terminal with: sudoorbell approve (gives up after ${SD_TIMEOUT}s)"
+	if [ -n "${SUDOORBELL_ANSWERED_IN:-}" ]; then
+		# A program answers it (the Claude Code plugin): no terminal to point at.
+		sd_err "waiting for the password in $SUDOORBELL_ANSWERED_IN: $command"
+	else
+		sd_err "waiting for approval to run as root: $command"
+		sd_err "answer in any terminal with: sudoorbell approve (gives up after ${SD_TIMEOUT}s)"
+	fi
 
 	answer=$(sd_read_answer "$fifo" "$SD_TIMEOUT")
 	case $answer in

@@ -43,6 +43,14 @@ What changed in each release of sudoorbell. The format follows
 
 ### Fixed
 
+- After Enter in the password field, the message said the password went to
+  sudo even when it was wrong. It now waits for sudo's answer: "wrong
+  password, sudo is asking again (attempt 2 of 3)", or that it was handed to
+  sudo.
+- When the plugin answers a request, sudo's output no longer tells Claude to
+  run `sudoorbell approve` in a terminal.
+- A program with no name above sudo (as under `docker exec`) was treated as
+  switched off, so the helper refused every request there.
 - The password field first used a pane, which Claude Code only places in a
   terminal at least 144 columns wide. In a narrower one the field never
   appeared, and the prompt became unusable while sudo waited. Found by the
