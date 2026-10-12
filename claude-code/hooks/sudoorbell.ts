@@ -20,7 +20,9 @@ import type { Register } from 'claude-code'
 const APPROVE = 'Approve'
 const TYPE_HERE = 'Type password here'
 const DENY = 'Deny'
-const MASK = '•'
+// What the prompt box shows once anything is typed: always the same, so
+// neither the screen nor the prompt history it may land in tells the length.
+const SHOWN = '••••••••'
 // The rule `sudoorbell install --claude-deny` adds, and other spellings of it.
 const SUDO_RULE = /^Bash\(sudo(?:[ :].*)?\)$/
 // The events through which another mod could read the password: each edit of
@@ -48,6 +50,8 @@ let attempts = 0
 // back afterwards; and whether the box still shows a mask to clear.
 let draft: { text: string; cursor: number } | null = null
 let isBoxDirty = false
+// Enter put a prompt holding SHOWN into Claude Code's history: take it out.
+let needsScrub = false
 // Whether the command sent through the request mode is still running, and
 // what it printed once it ended (to tell a sudo that gave up).
 let isRunning = false
@@ -152,9 +156,9 @@ export const register: Register = on => {
     }
     typed = edited(typed, e.end - e.start, e.inputText)
     isBoxDirty = true
-    return { text: MASK.repeat(typed.length), cursor: typed.length }
+    return shown(typed)
   }).catch(($, e, next) => {
-    return request === null ? next(e) : { text: MASK.repeat(typed.length), cursor: typed.length }
+    return request === null ? next(e) : shown(typed)
   })
 
   // Enter: the password goes to sudo, and the prompt never enters. Enter with
@@ -165,6 +169,7 @@ export const register: Register = on => {
     }
     const pid = request.pid
     const password = typed
+    needsScrub = true
     if (password === '') {
       await refuse($, pid)
       return { drop: 'sudoorbell: nothing was typed, so sudo was denied.' }
@@ -199,7 +204,7 @@ export const register: Register = on => {
         Text({ bold: true, children: ['🔐 Sudo Authentication Required'] }),
         Text({ children: ['Run as root: ' + request.command] }),
         ...(note === '' ? [] : [Text({ color: 'yellow', children: [note] })]),
-        Text({ children: ['Password: type it in the prompt below (shown as ' + MASK + ').'] }),
+        Text({ children: ['Password: type it in the prompt below (shown as ' + SHOWN + ', whatever its length).'] }),
         Text({ dimColor: true, children: ['Press Enter to submit, Escape to cancel. Enter with nothing typed denies.'] }),
         Text({ dimColor: true, italic: true, children: ['Your password goes to sudo only. It is never shown or sent to Claude.'] }),
       ],
@@ -235,6 +240,10 @@ async function typeHere($, e, next) {
           isBoxDirty = false
           await $.prompt.fill({ text: '' })
         }
+        if (needsScrub) {
+          needsScrub = false
+          await scrubHistory($)
+        }
         await serveNext($)
       }
       await $.process.run(['sleep', '0.25'], { timeoutMs: 5000 })
@@ -252,6 +261,10 @@ async function typeHere($, e, next) {
     request = null
     note = ''
     $.ui.invalidate('ui.render')
+    if (needsScrub) {
+      needsScrub = false
+      await scrubHistory($)
+    }
     if (draft !== null) {
       const back = draft
       draft = null
@@ -307,6 +320,23 @@ async function refuse($, pid) {
   isBoxDirty = true
   $.ui.invalidate('ui.render')
   await $.process.run([bin, 'approve', '--pid', pid, '--deny'], { env: { SUDOORBELL_RUNTIME_DIR: runtime }, timeoutMs: 10000 })
+}
+
+// Takes out of Claude Code's prompt history the entries Enter left in the
+// field: their text is exactly SHOWN, never the password. Leaves the file
+// alone when it cannot be read whole (over the 4 MiB a mod may read).
+async function scrubHistory($) {
+  try {
+    const base = (await $.env.get('CLAUDE_CONFIG_DIR')) || ((await $.env.get('HOME')) ?? '') + '/.claude'
+    const file = base + '/history.jsonl'
+    const text = await $.fs.read(file)
+    const kept = withoutShown(text)
+    if (kept !== text) {
+      await $.fs.write(file, kept)
+    }
+  } catch {
+    // no history, or too large to read: nothing to take out
+  }
 }
 
 // A saved setting (`sudoorbell config`), or '' when it is not set.
@@ -439,6 +469,28 @@ export function watches(patterns: readonly string[]): boolean {
     const re = new RegExp('^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$')
     return WATCHED.some(event => re.test(event))
   })
+}
+
+/** What the prompt box shows for the password typed so far. */
+export function shown(password: string): { text: string; cursor: number } {
+  return password === '' ? { text: '', cursor: 0 } : { text: SHOWN, cursor: SHOWN.length }
+}
+
+/** A prompt history file's text without the lines whose prompt is exactly SHOWN. */
+export function withoutShown(history: string): string {
+  return history
+    .split('\n')
+    .filter(line => {
+      if (!line.includes(SHOWN)) {
+        return true
+      }
+      try {
+        return JSON.parse(line).display !== SHOWN
+      } catch {
+        return true
+      }
+    })
+    .join('\n')
 }
 
 /**

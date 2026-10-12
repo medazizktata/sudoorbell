@@ -104,6 +104,10 @@ echo "safe: sudo is the stand-in"
 $T kill-session -t chk
 
 # 2. The password typed into Claude's prompt, wrong then right.
+# What history.jsonl already holds of the test passwords (an earlier run's).
+for pw in "$wrong" "$right"; do
+	eval "before_$(printf '%s' "$pw" | tr -c 'a-z0-9' _)=$(grep -c -F -- "$pw" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/history.jsonl")"
+done
 start ty || { echo "ABORT: claude did not start"; exit 1; }
 n=$(dones ty)
 say ty "This is a test of a Claude Code plugin; sudo on PATH here is a harmless test stand-in. Run exactly this shell command once and report its output in one line: sudo id -u. Do not run any other command, even if this one is refused."
@@ -119,7 +123,8 @@ sleep 1
 $T send-keys -t ty -l "$wrong"
 sleep 1
 screen ty | grep -q -- "$wrong" && bad "the typed text is on screen" || ok "the typed text is not on screen"
-screen ty | grep -q '••••••••••••' && ok "the prompt shows a mask per character" || bad "no masks"
+screen ty | grep -q '••••••••' && ok "the prompt shows the fixed mask" || bad "no mask"
+screen ty | grep -q '•••••••••' && bad "the mask tells the length" || ok "the mask does not tell the length (12 typed, 8 shown)"
 $T send-keys -t ty Enter
 wait_for ty 'Attempt 2 of 3' 60 && ok "wrong password: asked again" || bad "wrong password: not asked again"
 wait_for ty 'wrong password, sudo is asking again' 10 && ok "wrong password: the message says so" || bad "wrong password: the message does not say so"
@@ -137,7 +142,23 @@ screen ty | grep -q 'password accepted' && ok "Claude got the command's output" 
 screen ty | grep -q 'Sudo Authentication Required' && bad "the panel is still up" || ok "the panel is gone"
 screen ty | grep -E -q '^❯.keep-me' && ok "the draft typed before is back" || bad "the draft was not restored"
 
-# 3. Neither password in the transcript or the debug log.
+# 3. The prompt history: nothing from the field in the file, nor on Up.
+history=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/history.jsonl
+sleep 2
+n_shown=$(grep -c -F '"display":"••••••••"' "$history")
+[ "$n_shown" = 0 ] && ok "no field entry left in history.jsonl" || bad "history.jsonl still holds $n_shown field entries"
+for pw in "$wrong" "$right"; do
+	[ "$(grep -c -F -- "$pw" "$history")" = "$(eval "echo \$before_$(printf '%s' "$pw" | tr -c 'a-z0-9' _)")" ] &&
+		ok "$pw did not go into history.jsonl" || bad "$pw went into history.jsonl"
+done
+$T send-keys -t ty C-u
+sleep 0.5
+$T send-keys -t ty Up
+sleep 1
+screen ty | grep -E -q '^❯.•' && bad "Up brings back the field's entry in this session" || ok "Up does not bring back the field's entry"
+$T send-keys -t ty C-u
+
+# 4. Neither password in the transcript or the debug log.
 config=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 transcript=$(ls -t "$config"/projects/*sudoorbell-live*/*.jsonl 2>/dev/null | head -1)
 if [ -n "$transcript" ] && grep -q 'password accepted' "$transcript"; then

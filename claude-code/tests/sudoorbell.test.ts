@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { choices, clientOn, edited, outcome, eventsIn, question, runsSudo, settingIn, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
+import { choices, clientOn, edited, outcome, shown, withoutShown, eventsIn, question, runsSudo, settingIn, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
 
 // Stands for Claude Code beneath the mod: answers the question with `answer`
 // (or dismisses it when `answer` is null), runs Bash as a stub, and records
@@ -254,4 +254,22 @@ test('after the password, the message says what sudo did', async () => {
   expect(outcome(true, '')).toContain('the command is running')
   expect(outcome(false, 'Sorry, try again.\nsudo: 3 incorrect password attempts')).toContain('sudo gave up after 3 tries')
   expect(outcome(false, 'uid=0')).toContain('the command has finished')
+})
+
+test('the prompt box never tells the length of the password', async () => {
+  expect(shown('')).toEqual({ text: '', cursor: 0 })
+  expect(shown('a').text).toBe(shown('a much longer password').text)
+})
+
+test('the history loses only the entries Enter left in the field', async () => {
+  const lines = [
+    JSON.stringify({ display: 'run the tests', sessionId: 's' }),
+    JSON.stringify({ display: '••••••••', sessionId: 's' }),
+    JSON.stringify({ display: 'what does •••••••• mean', sessionId: 's' }),
+    'not json ••••••••',
+    JSON.stringify({ display: '•••', sessionId: 's' }),
+    '',
+  ]
+  const kept = withoutShown(lines.join('\n')).split('\n')
+  expect(kept).toEqual([lines[0], lines[2], lines[3], lines[4], ''])
 })
