@@ -57,6 +57,7 @@ Options:
 
 | | |
 |---|---|
+| `--clients all\|claude,codex,...` | which programs it works for (default: all; see [Choose which programs it works for](#choose-which-programs-it-works-for)) |
 | `--shell zsh,bash,fish,sh` | which shells to set up (default: every one installed; `sh` covers POSIX login shells such as dash and BusyBox ash, through `~/.profile`) |
 | `--claude-deny` | also stop Claude Code's agent from running `sudo` at all (see below) |
 | `--claude-mcp[=form\|browser]` | give Claude Code a `sudo` tool that asks for the password itself ([Claude Code mode](#claude-code-mode-the-password-asked-inside-claude-code)) |
@@ -179,6 +180,28 @@ dialog.
 
 **Codex, Cursor and others.** When the agent runs `sudo`, you get the dialog
 and decide.
+
+### Choose which programs it works for
+
+Some agents have their own sudo prompt: Cursor's agent asks for the password
+in its own box. Turn sudoorbell off for a program at any time, and its `sudo`
+goes on as if sudoorbell were not installed:
+
+```
+sudoorbell client                    # who it works for
+sudoorbell client off cursor-agent   # stay out of cursor-agent's way
+sudoorbell client on cursor-agent    # back on
+sudoorbell client only claude,codex  # those two only
+sudoorbell client all                # every program again (the default)
+```
+
+Or choose at install time: `sudoorbell install --clients claude,codex`
+(default: `all`). A program is named from its process: `claude`, `codex`,
+`cursor-agent` (which runs as `node`, so it is named from its command line),
+`gemini`, or any other program's own name. For a program that is off, the
+shell function runs plain `sudo`, the password helper refuses, and the Claude
+Code plugin stands aside. A program that sets its own `SUDO_ASKPASS`, as
+Cursor's agent does, keeps it.
 
 ## The Claude Code plugin: approve each sudo command
 
@@ -396,6 +419,8 @@ still wins for the commands it is set for.
 |---|---|---|---|
 | `touch_id` | `auto`, `off` | `auto` | `SUDOORBELL_TOUCH_ID` |
 | `claude_password` | `choose`, `outside`, `inside` | `choose` | |
+| `clients` | `all`, or names (`claude,codex`) | `all` | `SUDOORBELL_CLIENTS` |
+| `clients_off` | names (`cursor-agent`) | none | `SUDOORBELL_CLIENTS_OFF` |
 | `dialog` | `auto`, a dialog tool (`osascript`, `zenity`, `kdialog`, `yad`, an `ssh-askpass`), `tmux`, `terminal` | `auto` | `SUDOORBELL_BACKEND` |
 | `timeout` | 5 to 3600 seconds | `120` | `SUDOORBELL_TIMEOUT` |
 | `notify` | `on`, `off` | `on` | `SUDOORBELL_NOTIFY` (`0` is off) |

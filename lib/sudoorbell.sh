@@ -111,9 +111,16 @@ sd_parent_is_sudo() {
 	esac
 }
 
-# The program that asked for sudo: the first ancestor of process $1 that is not
-# a shell or a wrapper, e.g. "codex" or "claude". Empty if none is found.
+# The program that asked for sudo, from the ancestors of process $1: the first
+# that is not a shell or a wrapper, e.g. "codex" or "claude". A script run by
+# an interpreter is named from its command line: cursor-agent runs as `node
+# .../cursor-agent/.../index.js`. Empty if none is found. SD_CLIENT stands in
+# for it in tests.
 sd_requester() {
+	if [ -n "${SD_CLIENT:-}" ]; then
+		printf '%s\n' "$SD_CLIENT"
+		return
+	fi
 	pid=$(sd_proc ppid "$1")
 	i=0
 	while [ -n "$pid" ] && [ "$pid" -gt 1 ] && [ $i -lt 8 ]; do
@@ -124,7 +131,7 @@ sd_requester() {
 		sh | ash | bash | zsh | dash | ksh | mksh | fish | busybox | env | login | script | sudo | timeout | nohup | xargs | setsid | perl) ;;
 		'') return ;;
 		*)
-			printf '%s\n' "$name"
+			sd_client_name "$name" "$(sd_proc args "$pid")"
 			return
 			;;
 		esac
@@ -133,7 +140,35 @@ sd_requester() {
 	done
 }
 
-# A private directory for per-request state, owned by us and closed to others.
+# The name for program $1 (its process name) run with command line $2: a known
+# agent found in the command line of an interpreter, or the name itself.
+sd_client_name() {
+	case $1 in
+	node | nodejs | bun | deno | python | python3 | python3.* | ruby | java)
+		for agent in cursor-agent claude codex gemini opencode aider goose; do
+			case $2 in
+			*/"$agent"/* | */"$agent" | *" $agent"* | *"/$agent "* | *"@$agent"* | */"$agent"-cli/* | */"$agent"-cli)
+				printf '%s\n' "$agent"
+				return
+				;;
+			esac
+		done
+		;;
+	esac
+	printf '%s\n' "$1"
+}
+
+# Is sudoorbell on for client $1? Off when `clients_off` lists it, or when
+# `clients` lists others only. On for everything by default.
+sd_client_enabled() {
+	off=${SUDOORBELL_CLIENTS_OFF:-$(sd_config clients_off)}
+	case ",$off," in *",$1,"*) return 1 ;; esac
+	only=${SUDOORBELL_CLIENTS:-$(sd_config clients)}
+	case $only in '' | all) return 0 ;; esac
+	case ",$only," in *",$1,"*) return 0 ;; esac
+	return 1
+}
+
 sd_state_dir() {
 	# SUDOORBELL_RUNTIME_DIR: set by the Claude Code plugin on both ends of a
 	# request it answers, so they meet even if their TMPDIR differs.

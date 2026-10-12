@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { choices, edited, eventsIn, question, runsSudo, settingIn, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
+import { choices, clientOn, edited, eventsIn, question, runsSudo, settingIn, viaRequest, watches, withoutSudo } from '../hooks/sudoorbell.ts'
 
 // Stands for Claude Code beneath the mod: answers the question with `answer`
 // (or dismisses it when `answer` is null), runs Bash as a stub, and records
@@ -223,4 +223,29 @@ test('typing into the prompt box builds the password, which only ever shows as m
   expect(edited(pw, 99, '')).toBe('')             // a kill of the whole line
   expect(edited('ab', 0, 'cd\nef')).toBe('abcdef') // a paste, line break dropped
   expect(edited('abc', 1, 'X')).toBe('abX')       // a replacement
+})
+
+test('the clients settings decide whether the plugin acts for Claude', async () => {
+  expect(clientOn('', '', 'claude')).toBe(true)
+  expect(clientOn('all', '', 'claude')).toBe(true)
+  expect(clientOn('', 'cursor-agent', 'claude')).toBe(true)
+  expect(clientOn('', 'cursor-agent,claude', 'claude')).toBe(false)
+  expect(clientOn('codex', '', 'claude')).toBe(false)
+  expect(clientOn('codex, claude', '', 'claude')).toBe(true)
+})
+
+test('with claude switched off, the plugin asks nothing and lets the rules decide', async ($, on) => {
+  on('env.get', ($, e) => ({ value: e.name === 'HOME' ? '/home/me' : undefined }))
+  on('fs.read', ($, e) => (e.path === '/home/me/.config/sudoorbell/config' ? { value: 'clients_off = claude\n' } : { deny: 'missing' }))
+  const asked: string[] = []
+  on('tool.call', ($, e) => {
+    if (e.tool === 'AskUserQuestion') {
+      asked.push(e.questions[0].question)
+      return { result: { answers: { [e.questions[0].question]: 'Deny' } } }
+    }
+    return { result: { stdout: 'went to the rules', stderr: '', interrupted: false } }
+  })
+  const out = await $.tool.call({ tool: 'Bash', command: 'sudo id -u' })
+  expect(asked).toEqual([])
+  expect(out.deny).toBeUndefined()
 })

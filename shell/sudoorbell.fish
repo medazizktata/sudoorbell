@@ -4,7 +4,10 @@
 # terminal.
 
 if set -q SUDOORBELL_HOME; and test -x "$SUDOORBELL_HOME/libexec/sudoorbell-askpass"
-    set -gx SUDO_ASKPASS "$SUDOORBELL_HOME/libexec/sudoorbell-askpass"
+    # A program that brings its own askpass (Cursor's agent does) keeps it.
+    if not set -q SUDO_ASKPASS; or string match -q '*/libexec/sudoorbell-askpass' -- $SUDO_ASKPASS
+        set -gx SUDO_ASKPASS "$SUDOORBELL_HOME/libexec/sudoorbell-askpass"
+    end
 
     function sudo --wraps sudo --description 'sudo, with a password dialog when there is no terminal'
         # A terminal is available: sudo asks there, as usual.
@@ -36,6 +39,12 @@ if set -q SUDOORBELL_HOME; and test -x "$SUDOORBELL_HOME/libexec/sudoorbell-askp
                 case '*'
                     break
             end
+        end
+        # Turned off for the program this shell runs for (`sudoorbell client`):
+        # sudo as if sudoorbell were not here.
+        if not sh -c '. "$SUDOORBELL_HOME/lib/sudoorbell.sh" && sd_client_enabled "$(sd_requester "$1")"' sh $fish_pid
+            command sudo $argv
+            return
         end
         # macOS skips Touch ID when sudo is given -A. So with Touch ID on,
         # start sudo without -A and with DISPLAY set: with no terminal and a

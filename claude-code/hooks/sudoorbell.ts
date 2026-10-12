@@ -69,6 +69,11 @@ export const register: Register = on => {
     if (!runsSudo(command)) {
       return next(e)
     }
+    // `sudoorbell client off claude`: this plugin stands aside, and the
+    // command meets the permission rules as if it were not installed.
+    if (!clientOn(await setting($, 'clients'), await setting($, 'clients_off'), 'claude')) {
+      return next(e)
+    }
     if (!isScanned) {
       await scanPlugins($)
       isScanned = true
@@ -369,6 +374,15 @@ export function settingIn(text: string, key: string): string {
     }
   }
   return value
+}
+
+/** Is sudoorbell on for client `name`, by the `clients` and `clients_off` settings? */
+export function clientOn(only: string, off: string, name: string): boolean {
+  const list = (text: string) => text.split(',').map(x => x.trim()).filter(x => x !== '')
+  if (list(off).includes(name)) {
+    return false
+  }
+  return only === '' || only === 'all' || list(only).includes(name)
 }
 
 /**

@@ -13,8 +13,13 @@
 #    for sudo, it sets DISPLAY instead, so that Touch ID is tried first.
 
 if [ -n "${SUDOORBELL_HOME:-}" ] && [ -x "$SUDOORBELL_HOME/libexec/sudoorbell-askpass" ]; then
-	SUDO_ASKPASS="$SUDOORBELL_HOME/libexec/sudoorbell-askpass"
-	export SUDO_ASKPASS
+	# A program that brings its own askpass (Cursor's agent does) keeps it.
+	case ${SUDO_ASKPASS:-} in
+	'' | */libexec/sudoorbell-askpass)
+		SUDO_ASKPASS="$SUDOORBELL_HOME/libexec/sudoorbell-askpass"
+		export SUDO_ASKPASS
+		;;
+	esac
 	case ${SD_OS:-$(uname -s 2>/dev/null)} in
 	macos | Darwin) _sd_macos=1 ;;
 	*) _sd_macos= ;;
@@ -33,6 +38,17 @@ if [ -n "${SUDOORBELL_HOME:-}" ] && [ -x "$SUDOORBELL_HOME/libexec/sudoorbell-as
 		_sd_pam=${SD_PAM_DIR:-/etc/pam.d}
 		grep -q -E '^[[:space:]]*auth[[:space:]].*pam_(tid|watchid)\.so' \
 			"$_sd_pam/sudo_local" "$_sd_pam/sudo" 2>/dev/null
+	}
+
+	# Is sudoorbell on for the program this shell runs for (`sudoorbell
+	# client`)? Without client settings it is, and nothing is looked up.
+	_sudoorbell_client_on() {
+		if [ -z "${SUDOORBELL_CLIENTS:-}${SUDOORBELL_CLIENTS_OFF:-}" ] &&
+			! grep -q -E '^[[:space:]]*clients(_off)?[[:space:]]*=' \
+				"${XDG_CONFIG_HOME:-$HOME/.config}/sudoorbell/config" 2>/dev/null; then
+			return 0
+		fi
+		(. "$SUDOORBELL_HOME/lib/sudoorbell.sh" && sd_client_enabled "$(sd_requester "$$")")
 	}
 
 	_sudoorbell_sudo() {
@@ -66,6 +82,11 @@ if [ -n "${SUDOORBELL_HOME:-}" ] && [ -x "$SUDOORBELL_HOME/libexec/sudoorbell-as
 			*) break ;;
 			esac
 		done
+		# Turned off for this program: sudo as if sudoorbell were not here.
+		if ! _sudoorbell_client_on; then
+			command sudo "$@"
+			return
+		fi
 		# macOS skips Touch ID when sudo is given -A. So with Touch ID on,
 		# start sudo without -A and with DISPLAY set: with no terminal and a
 		# display, sudo uses SUDO_ASKPASS by itself, after Touch ID has had

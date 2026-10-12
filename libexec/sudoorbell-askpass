@@ -33,6 +33,13 @@ if ! sd_parent_is_sudo "$sudo_pid"; then
 	exit 1
 fi
 
+requester=$(sd_requester "$sudo_pid")
+# `sudoorbell client off NAME`: not for this program.
+if ! sd_client_enabled "$requester"; then
+	sd_err "not asking: sudoorbell is off for ${requester:-this program} (turn it on with: sudoorbell client on ${requester:-NAME})"
+	exit 1
+fi
+
 # Touch ID's own prompt already offered a password ("Use Password…"). Asking
 # again would turn its Cancel into a second prompt instead of a no.
 if sd_touch_id_was_offered "$sudo_pid"; then
@@ -41,7 +48,6 @@ if sd_touch_id_was_offered "$sudo_pid"; then
 fi
 
 command=$(sd_command_of "$sudo_pid")
-requester=$(sd_requester "$sudo_pid")
 attempt=$(sd_attempt "$sudo_pid")
 message=$(sd_message "$command" "$requester" "$attempt")
 backend=$(sd_backend)

@@ -1,12 +1,13 @@
 #!/bin/sh
 # sudoorbell: set up, check and remove the sudo password dialog.
 #
-#   sudoorbell install [--shell zsh|bash|fish|sh|all] [--claude-deny] [--claude-mcp[=form|browser]]
+#   sudoorbell install [--shell zsh|bash|fish|sh|all] [--clients all|NAME,...] [--claude-deny] [--claude-mcp[=form|browser]]
 #   sudoorbell uninstall [--claude-deny] [--claude-mcp]
 #   sudoorbell doctor
 #   sudoorbell preview
 #   sudoorbell approve [--deny] [--pending] [--pid N [--stdin]]
 #   sudoorbell config [KEY [VALUE] | --reset KEY]
+#   sudoorbell client [on NAME | off NAME | only NAME,... | all]
 #
 # approve answers sudo requests waiting for you when there is no desktop to
 # show a dialog on (SSH, servers, containers). config shows or changes how
@@ -52,7 +53,7 @@ die() {
 }
 
 usage() {
-	sed -n '2,18s/^# \{0,1\}//p' "$0"
+	sed -n '2,19s/^# \{0,1\}//p' "$0"
 }
 
 # ── shell startup files ──────────────────────────────────────
@@ -194,13 +195,17 @@ line() {
 	printf '%s\t%s\n' "$1" "$2"
 }
 
-CONFIG_KEYS='touch_id claude_password dialog timeout notify title'
+CONFIG_KEYS='touch_id claude_password clients clients_off dialog timeout notify title'
+# Agents named by `sudoorbell client`; any other program goes by its own name.
+KNOWN_CLIENTS='claude codex cursor-agent gemini'
 
 # config_about KEY: its values, its default and what it does, tab-separated.
 config_about() {
 	case $1 in
 	touch_id) printf 'auto|off\tauto\tTouch ID for sudo: used when macOS has it turned on (auto), or never (off)\n' ;;
 	claude_password) printf 'choose|outside|inside\tchoose\tIn Claude Code, for each sudo command: offer both ways (choose), only Touch ID or the window (outside), or only the hidden field in Claude Code (inside)\n' ;;
+	clients) printf 'list\tall\tThe programs sudoorbell works for: all, or only these (claude,codex,...)\n' ;;
+	clients_off) printf 'list\t\tPrograms sudoorbell stays out of, even when clients is all (cursor-agent,...)\n' ;;
 	dialog) printf 'auto|osascript|zenity|kdialog|yad|ksshaskpass|lxqt-openssh-askpass|ssh-askpass-gnome|x11-ssh-askpass|ssh-askpass|tmux|terminal\tauto\tHow the password is asked: picked for the system (auto), a dialog tool, a tmux popup, or a terminal (sudoorbell approve)\n' ;;
 	timeout) printf 'seconds\t120\tSeconds before an unanswered request counts as Deny (5 to 3600)\n' ;;
 	notify) printf 'on|off\ton\tWithout a desktop, tell your other terminals when a request waits\n' ;;
@@ -217,6 +222,8 @@ config_env() {
 	timeout) echo SUDOORBELL_TIMEOUT ;;
 	notify) echo SUDOORBELL_NOTIFY ;;
 	title) echo SUDOORBELL_TITLE ;;
+	clients) echo SUDOORBELL_CLIENTS ;;
+	clients_off) echo SUDOORBELL_CLIENTS_OFF ;;
 	esac
 }
 
@@ -228,6 +235,8 @@ config_valid() {
 		[ "$2" -ge 5 ] && [ "$2" -le 3600 ]
 		;;
 	text) [ -n "$2" ] && [ "$(printf '%s' "$2" | wc -l | tr -d ' ')" = 0 ] ;;
+	list) [ "$2" = all ] && [ "$1" = clients ] && return 0
+		printf '%s' "$2" | grep -q -x -E '[a-z0-9._-]+(,[a-z0-9._-]+)*' ;;
 	*) printf '%s\n' "$allowed" | tr '|' '\n' | grep -q -x -F -- "$2" ;;
 	esac
 }
@@ -260,7 +269,7 @@ config_show() {
 		# shellcheck disable=SC2154 # set by the eval
 		[ -z "$envvalue" ] || value=$envvalue from="$env in the environment"
 	fi
-	printf '%-16s %-22s (%s)\n' "$1" "$value" "$from"
+	printf '%-16s %-22s (%s)\n' "$1" "${value:-none}" "$from"
 }
 
 cmd_config() {
@@ -290,14 +299,78 @@ cmd_config() {
 			config_show "$1"
 			about=$(config_about "$1")
 			say "  $(printf '%s' "$about" | cut -f3)"
-			say "  values: $(printf '%s' "$about" | cut -f1 | sed 's/|/, /g; s/^seconds$/5 to 3600 seconds/; s/^text$/one line of text/'); default: $(printf '%s' "$about" | cut -f2)"
+			say "  values: $(printf '%s' "$about" | cut -f1 | sed 's/|/, /g; s/^seconds$/5 to 3600 seconds/; s/^text$/one line of text/; s/^list$/names separated by commas/'); default: $(printf '%s' "$about" | cut -f2)"
 			return 0
 		fi
 		[ $# -eq 2 ] || die "usage: sudoorbell config KEY VALUE (quote a value with spaces)"
-		config_valid "$1" "$2" || die "not a value for $1: $2 (values: $(config_about "$1" | cut -f1 | sed 's/|/, /g; s/^seconds$/5 to 3600 seconds/; s/^text$/one line of text/'))"
+		config_valid "$1" "$2" || die "not a value for $1: $2 (values: $(config_about "$1" | cut -f1 | sed 's/|/, /g; s/^seconds$/5 to 3600 seconds/; s/^text$/one line of text/; s/^list$/names separated by commas/'))"
 		config_write "$1" "$2"
 		config_show "$1"
 		;;
+	esac
+}
+
+# The list $1 (names separated by commas) with $2 added, or taken out by list_del.
+list_add() {
+	case ",$1," in
+	*",$2,"*) printf '%s\n' "$1" ;;
+	,,) printf '%s\n' "$2" ;;
+	*) printf '%s,%s\n' "$1" "$2" ;;
+	esac
+}
+list_del() {
+	printf '%s' "$1" | tr ',' '\n' | grep -v -x -F -- "$2" | paste -s -d, - || true
+}
+
+client_name() {
+	printf '%s' "$1" | grep -q -x -E '[a-z0-9._-]+' || die "not a program name: $1"
+}
+
+# Which programs sudoorbell works for: `sudoorbell client` lists them,
+# `on`/`off NAME` switch one at any time, `only NAME,...` keeps to those,
+# `all` puts back the default.
+cmd_client() {
+	case ${1:-} in
+	'' | list)
+		only=$(sd_config clients) off=$(sd_config clients_off) shown=''
+		for name in $KNOWN_CLIENTS $(printf '%s,%s' "$only" "$off" | tr ',' ' '); do
+			[ "$name" != all ] || continue
+			case " $shown " in *" $name "*) continue ;; esac
+			shown="$shown $name"
+			if sd_client_enabled "$name"; then state=on; else state=off; fi
+			printf '  %-14s %s\n' "$name" "$state"
+		done
+		if sd_client_enabled "some-other-program"; then state=on; else state=off; fi
+		printf '  %-14s %s\n' "(any other)" "$state"
+		say ""
+		say "Switch one with: sudoorbell client on|off NAME. Keep to some with: sudoorbell client only NAME,NAME. Back to all: sudoorbell client all"
+		;;
+	on)
+		[ $# -eq 2 ] || die "usage: sudoorbell client on NAME"
+		client_name "$2"
+		config_write clients_off "$(list_del "$(sd_config clients_off)" "$2")"
+		only=$(sd_config clients)
+		case $only in '' | all) ;; *) config_write clients "$(list_add "$only" "$2")" ;; esac
+		say "sudoorbell is on for $2"
+		;;
+	off)
+		[ $# -eq 2 ] || die "usage: sudoorbell client off NAME"
+		client_name "$2"
+		config_write clients_off "$(list_add "$(sd_config clients_off)" "$2")"
+		say "sudoorbell is off for $2: its sudo goes on as if sudoorbell were not installed"
+		;;
+	only)
+		[ $# -eq 2 ] || die "usage: sudoorbell client only NAME[,NAME...]"
+		config_valid clients "$2" || die "not a list of program names: $2"
+		config_write clients "$2"
+		say "sudoorbell works for $2 only"
+		;;
+	all)
+		config_write clients ''
+		config_write clients_off ''
+		say "sudoorbell works for every program"
+		;;
+	*) die "usage: sudoorbell client [list | on NAME | off NAME | only NAME,... | all]" ;;
 	esac
 }
 
@@ -312,12 +385,18 @@ same_dir() {
 }
 
 cmd_install() {
-	shells='' claude='' mcp=''
+	shells='' claude='' mcp='' clients=''
 	while [ $# -gt 0 ]; do
 		case $1 in
 		--shell)
 			[ $# -ge 2 ] || die "--shell needs a value"
 			shells=$2
+			shift
+			;;
+		--clients)
+			[ $# -ge 2 ] || die "--clients needs a value: all, or names such as claude,codex"
+			config_valid clients "$2" || die "not a list of program names: $2"
+			clients=$2
 			shift
 			;;
 		--claude-deny) claude=1 ;;
@@ -380,6 +459,16 @@ cmd_install() {
 		*) die "unsupported shell: $s" ;;
 		esac
 	done
+
+	if [ -n "$clients" ]; then
+		if [ "$clients" = all ]; then
+			config_write clients ''
+			say "  for every program (change with: sudoorbell client)"
+		else
+			config_write clients "$clients"
+			say "  for $clients only (change with: sudoorbell client)"
+		fi
+	fi
 
 	if [ -n "$claude" ]; then
 		if claude_has_rule; then
@@ -482,6 +571,12 @@ cmd_doctor() {
 		touch_id_report | while IFS="$(printf '\t')" read -r status text; do
 			check "$status" "$text"
 		done
+	fi
+	only=$(sd_config clients) off=$(sd_config clients_off)
+	if [ -n "$off" ]; then
+		check OK "works for: ${only:-every program}, except $off (change with: sudoorbell client)"
+	else
+		check OK "works for: ${only:-every program} (change with: sudoorbell client)"
 	fi
 	if [ "$os" = linux ] && sd_has_display; then
 		check OK "display: ${WAYLAND_DISPLAY:-${DISPLAY:-socket}} (sudo uses the dialog by itself here, even without the shell function)"
@@ -654,6 +749,10 @@ approve)
 config)
 	shift
 	cmd_config "$@"
+	;;
+client | clients)
+	shift
+	cmd_client "$@"
 	;;
 version | --version) say "$VERSION" ;;
 help | -h | --help) usage ;;
