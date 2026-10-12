@@ -257,9 +257,9 @@ test('after the password, the message says what sudo did', async () => {
 })
 
 test('the prompt box shows a painted mask per character, never the password', async () => {
-  expect(shown('')).toMatchObject({ text: '', cursor: 0 })
-  expect(shown('pass word')).toMatchObject({ text: '•••••••••', cursor: 9 })
-  expect(shown('pass word').decorations).toEqual([{ start: 0, end: 9, color: 'warning', bold: true }])
+  expect(shown('')).toMatchObject({ text: '🔒 ', cursor: 3 })
+  expect(shown('pass word')).toMatchObject({ text: '🔒 •••••••••', cursor: 12 })
+  expect(shown('pass word').decorations).toEqual([{ start: 0, end: 12, color: 'warning', bold: true }])
 })
 
 test('the history loses only the entries Enter left in the field', async () => {
@@ -269,8 +269,11 @@ test('the history loses only the entries Enter left in the field', async () => {
     JSON.stringify({ display: 'what does •••••••• mean', sessionId: 's' }),
     'not json ••••••••',
     JSON.stringify({ display: '•••', sessionId: 's' }),
+    JSON.stringify({ display: '🔒 •••', sessionId: 's' }),
+    JSON.stringify({ display: '🔒', sessionId: 's' }),
+    JSON.stringify({ display: '🔒 the vault', sessionId: 's' }),
     '',
   ]
   const kept = withoutShown(lines.join('\n')).split('\n')
-  expect(kept).toEqual([lines[0], lines[2], lines[3], ''])
+  expect(kept).toEqual([lines[0], lines[2], lines[3], lines[7], ''])
 })

@@ -125,10 +125,12 @@ sleep 1
 screen ty | grep -q -- "$wrong" && bad "the typed text is on screen" || ok "the typed text is not on screen"
 screen ty | grep -q '••••••••••••' && ok "the prompt shows a mask per character (12 typed)" || bad "not 12 masks"
 screen ty | grep -q '•••••••••••••' && bad "more masks than characters" || ok "no more masks than characters"
-# The masks are painted bold: bold turns on right before them (a colour may follow).
+screen ty | grep -E -q '^❯.🔒 •' && ok "the box starts with the lock" || bad "no lock in the box"
+# The lock and masks are painted bold: bold turns on right before them (a
+# colour may follow), and the hint line is drawn in a colour of its own.
 $T capture-pane -e -p -t ty >"$work/styled.txt"
-grep -E -q $'\e\\[1m(\e\\[[0-9;]*m)*•' "$work/styled.txt" && ok "the masks are styled as a password field" || bad "the masks are not styled"
-screen ty | grep -q '🔒 sudo password' && ok "the hint line says the box is the password field" || bad "no password hint line"
+grep -E -q $'\e\\[1m(\e\\[[0-9;]*m)*🔒 •' "$work/styled.txt" && ok "the box is styled as a password field" || bad "the box is not styled"
+grep -E -q $'\e\\[38;5;[0-9]+m🔒 sudo password' "$work/styled.txt" && ok "the hint line says, in colour, the box is the password field" || bad "no coloured password hint line"
 $T send-keys -t ty Enter
 wait_for ty 'Attempt 2 of 3' 60 && ok "wrong password: asked again" || bad "wrong password: not asked again"
 wait_for ty 'wrong password, sudo is asking again' 10 && ok "wrong password: the message says so" || bad "wrong password: the message does not say so"

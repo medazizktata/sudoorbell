@@ -20,9 +20,12 @@ import type { Register } from 'claude-code'
 const APPROVE = 'Approve'
 const TYPE_HERE = 'Type password here'
 const DENY = 'Deny'
-// What the prompt box shows for each character typed; a prompt made only of
-// it is a submitted password field, taken out of the prompt history.
+// What the prompt box shows while it is the password field: LEAD, then MASK
+// for each character typed. A submitted field is taken out of the prompt
+// history, matched by FIELD.
+const LEAD = '🔒 '
 const MASK = '•'
+const FIELD = /^(?:🔒 ?•*|•+)$/u
 // The rule `sudoorbell install --claude-deny` adds, and other spellings of it.
 const SUDO_RULE = /^Bash\(sudo(?:[ :].*)?\)$/
 // The events through which another mod could read the password: each edit of
@@ -198,12 +201,14 @@ export const register: Register = on => {
     return request === null ? next(e) : { drop: 'sudoorbell: could not hand the password over; sudo will time out.' }
   })
 
-  // The hint line under the prompt says the box is the password field.
+  // The hint line under the prompt says, in the field's colour, that the box
+  // is the password field, the way shell mode's line does.
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     if (request === null) {
       return next(e)
     }
-    return next({ ...e, props: { ...e.props, hint: '🔒 sudo password · Enter sends it to sudo · Esc cancels' } })
+    const { Text } = $.ui.resolve(e)
+    return Text({ color: 'warning', children: ['🔒 sudo password · Enter sends it to sudo · Esc cancels'] })
   })
 
   // The panel above the prompt while a request waits.
@@ -307,7 +312,8 @@ async function serveNext($) {
   typed = ''
   note = attempts > 1 ? 'Sorry, try again. Attempt ' + attempts + ' of 3.' : ''
   request = { pid: line.slice(0, tab), command: line.slice(tab + 1) }
-  await $.prompt.fill({ text: '' })
+  const { text, decorations } = shown('')
+  await $.prompt.fill({ text, decorations })
   $.ui.invalidate('ui.render')
 }
 
@@ -487,23 +493,22 @@ export function watches(patterns: readonly string[]): boolean {
   })
 }
 
-/** What the prompt box shows for the password typed so far: a mask per character, painted as a password field. */
+/** What the prompt box shows for the password typed so far: the lead and a mask per character, painted as a password field. */
 export function shown(password: string): { text: string; cursor: number; decorations: { start: number; end: number; color: 'warning'; bold: true }[] } {
-  const text = MASK.repeat(password.length)
+  const text = LEAD + MASK.repeat(password.length)
   return { text, cursor: text.length, decorations: [{ start: 0, end: text.length, color: 'warning', bold: true }] }
 }
 
-/** A prompt history file's text without the lines whose prompt is masks only. */
+/** A prompt history file's text without the lines whose prompt is a submitted password field. */
 export function withoutShown(history: string): string {
-  const masks = new RegExp('^' + MASK + '+$')
   return history
     .split('\n')
     .filter(line => {
-      if (!line.includes(MASK)) {
+      if (!line.includes(MASK) && !line.includes(LEAD.trim())) {
         return true
       }
       try {
-        return !masks.test(JSON.parse(line).display)
+        return !FIELD.test(JSON.parse(line).display)
       } catch {
         return true
       }
